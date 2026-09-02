@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>24h Executive Archiv</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+  <style>
+    
+    :root {
+      --bg: #121418;
+      --sidebar-bg: #181b20;
+      --card-bg: #1e2229;
+      --card-hover: #262b34;
+      --border: #2e3440;
+      --text: #e2e8f0;
+      --text-muted: #94a3b8;
+      --text-bold: #f1f5f9;
+      --accent: #2ecc71;
+      --accent-dim: rgba(46, 204, 113, 0.15);
+      --link: #60a5fa;
+      --focus-ring: #3b82f6;
+    }
+
+    [data-theme="light"] {
+      --bg: #f8fafc;
+      --sidebar-bg: #ffffff;
+      --card-bg: #ffffff;
+      --card-hover: #f1f5f9;
+      --border: #e2e8f0;
+      --text: #1e293b;
+      --text-muted: #64748b;
+      --text-bold: #0f172a;
+      --accent: #16a34a;
+      --accent-dim: rgba(22, 163, 74, 0.12);
+      --link: #2563eb;
+      --focus-ring: #2563eb;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+
+    .theme-toggle, .menu-toggle {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 1.1rem;
+      padding: 6px 10px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .theme-toggle:hover, .menu-toggle:hover {
+      background: var(--card-hover);
+      border-color: var(--text-muted);
+    }
+
+    .feed-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform 0.15s ease, border-color 0.15s ease, opacity 0.2s, box-shadow 0.15s ease;
+      outline: none;
+    }
+    .feed-card:hover {
+      background: var(--card-hover);
+      border-color: var(--text-muted);
+      transform: translateY(-2px);
+    }
+    .feed-card.selected {
+      border-color: var(--focus-ring);
+      box-shadow: 0 0 0 2px var(--focus-ring);
+    }
+    .feed-card.read { opacity: 0.4; }
+    .feed-card.read .feed-title { color: var(--text-muted); }
+
+    .feed-content { display: flex; flex-direction: column; flex-grow: 1; }
+    .feed-meta {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 0.75rem;
+      margin-bottom: 8px;
+    }
+    .feed-source { color: var(--accent); font-weight: 600; }
+    .feed-time, .feed-others { color: var(--text-muted); font-size: 0.72rem; }
+
+    .feed-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--text-bold);
+      text-decoration: none;
+      line-height: 1.4;
+      margin-bottom: 8px;
+    }
+    .feed-title:hover { color: var(--link); text-decoration: underline; }
+
+    .feed-summary {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-bottom: 14px;
+      flex-grow: 1;
+    }
+    .feed-summary strong { color: var(--text-bold); font-weight: 600; }
+
+    .feed-thumb {
+      width: 100%;
+      height: 160px;
+      object-fit: cover;
+      border-radius: 6px;
+      margin-top: auto;
+      background: var(--border);
+    }
+
+
+    body {
+      padding: 24px 40px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    .container { max-width: 1300px; margin: 0 auto; }
+    .top-nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .back-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+    .header { margin-bottom: 24px; }
+    .header h1 { font-size: 1.6rem; color: var(--text-bold); font-weight: 700; }
+    .header p { color: var(--text-muted); font-size: 0.85rem; margin-top: 4px; }
+    .summary-badge {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      padding: 12px 18px;
+      border-radius: 8px;
+      margin-bottom: 28px;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+    .source-block { margin-bottom: 36px; }
+    .source-title {
+      font-size: 1.25rem;
+      color: var(--text-bold);
+      margin-bottom: 16px;
+      border-bottom: 2px solid var(--accent);
+      display: inline-block;
+      padding-bottom: 4px;
+      font-weight: 700;
+    }
+
+    .archive-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    @media (max-width: 768px) {
+      body { padding: 16px 12px; }
+      .archive-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .feed-card { padding: 14px; }
+      .feed-thumb { height: 150px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="top-nav">
+      <a href="index.html" class="back-btn">← Zurück zum Live-Feed</a>
+      <button class="theme-toggle" onclick="toggleTheme()" title="Dark/Light Mode umschalten">🌓</button>
+    </div>
+    <div class="header">
+      <h1>📑 24h Executive Archiv</h1>
+      <p>Stand: 02.09.2026, 23:33 Uhr • Alle Themen der letzten 24 Stunden im Überblick</p>
+    </div>
+    <div class="summary-badge" id="archive-badge">
+      Entschlüssle Archiv...
+    </div>
+    <div id="archive-content"></div>
+  </div>
+
+  <script>
+    function initTheme() {
+      const savedTheme = localStorage.getItem('hub_theme');
+      if (savedTheme) {
+        document.documentElement.setAttribute('data-theme', savedTheme);
+      } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    }
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const target = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', target);
+      localStorage.setItem('hub_theme', target);
+    }
+
+    function formatRelativeTime(isoDateStr) {
+      if (!isoDateStr) return '';
+      try {
+        const diffSec = Math.floor((new Date() - new Date(isoDateStr)) / 1000);
+        if (isNaN(diffSec)) return '';
+        if (diffSec < 60) return '• gerade eben';
+        const m = Math.floor(diffSec / 60);
+        if (m < 60) return `• vor ${m}m`;
+        const h = Math.floor(m / 60);
+        if (h < 24) return `• vor ${h}h`;
+        return `• vor ${Math.floor(h / 24)}d`;
+      } catch(e) { return ''; }
+    }
+
+    async function loadArchive() {
+      initTheme();
+      const r = await fetch('data.json');
+      const enc = await r.text();
+      const pw = localStorage.getItem('hub_key');
+      let articles = [];
+
+      try {
+        if (enc.trim().startsWith('[')) {
+          articles = JSON.parse(enc);
+        } else if (pw) {
+          const decrypted = CryptoJS.AES.decrypt(enc, pw).toString(CryptoJS.enc.Utf8);
+          articles = JSON.parse(decrypted);
+        }
+      } catch(e) {}
+
+      if (!articles || !articles.length) {
+        document.getElementById('archive-badge').textContent = 'Keine Daten gefunden oder Passwort nicht gespeichert. Bitte erst im Feed anmelden.';
+        return;
+      }
+
+      const cutoff = new Date(Date.now() - 24 * 3600 * 1000);
+      const recent = articles.filter(a => {
+        try { return new Date(a.published) >= cutoff; } catch(e) { return true; }
+      });
+
+      let totalDups = 0;
+      const sourcesMap = {};
+      recent.forEach(a => {
+        totalDups += (a.other_sources || []).length;
+        const s = a.source || "Unbekannt";
+        if (!sourcesMap[s]) sourcesMap[s] = [];
+        sourcesMap[s].push(a);
+      });
+
+      document.getElementById('archive-badge').innerHTML = 
+        `<strong>${recent.length} Meldungen</strong> erfasst • <strong style="color: var(--accent);">${totalDups} parallele Berichte</strong> gebündelt.`;
+
+      let html = "";
+      const sortedSources = Object.entries(sourcesMap).sort((a, b) => b[1].length - a[1].length);
+
+      for (const [sourceName, items] of sortedSources) {
+        html += `<div class="source-block"><h2 class="source-title">${escapeHtml(sourceName)} (${items.length})</h2><div class="archive-grid">`;
+        items.forEach(it => {
+          const others = (it.other_sources && it.other_sources.length) 
+            ? `<span class="feed-others">• Auch bei: ${escapeHtml(it.other_sources.join(", "))}</span>` : "";
+          const img = it.image ? `<img class="feed-thumb" src="${it.image}" loading="lazy" alt="Thumbnail" onerror="this.remove()" />` : "";
+          const timeAgo = formatRelativeTime(it.published);
+
+          html += `
+            <article class="feed-card">
+              <div class="feed-content">
+                <div class="feed-meta">
+                  <span class="feed-source">${escapeHtml(it.source)}</span>
+                  <span class="feed-time">${timeAgo}</span>
+                  ${others}
+                </div>
+                <a class="feed-title" href="${escapeHtml(it.link)}" target="_blank" rel="noopener">${escapeHtml(it.title)}</a>
+                <p class="feed-summary">${it.summary}</p>
+              </div>
+              ${img}
+            </article>`;
+        });
+        html += `</div></div>`;
+      }
+      document.getElementById('archive-content').innerHTML = html;
+    }
+
+    function escapeHtml(s) {
+      return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    document.addEventListener('DOMContentLoaded', loadArchive);
+  </script>
+</body>
+</html>
