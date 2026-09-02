@@ -282,8 +282,8 @@
       line-height: 1;
     }
     .close-btn:hover { color: var(--text); }
-    .category-list { list-style: none; padding: 12px; overflow-y: auto; flex-grow: 1; min-width: 290px; }
-    .category-btn {
+    .source-list { list-style: none; padding: 12px; overflow-y: auto; flex-grow: 1; min-width: 290px; }
+    .source-btn {
       width: 100%;
       text-align: left;
       padding: 10px 14px;
@@ -300,7 +300,7 @@
       align-items: center;
       transition: all 0.15s ease;
     }
-    .category-btn:hover, .category-btn.active {
+    .source-btn:hover, .source-btn.active {
       background: var(--accent-dim);
       color: var(--accent);
       font-weight: 600;
@@ -312,7 +312,7 @@
       font-size: 0.7rem;
       color: var(--text);
     }
-    .category-btn.active .badge { background: var(--accent); color: #fff; }
+    .source-btn.active .badge { background: var(--accent); color: #fff; }
 
     .sidebar-footer {
       padding: 16px;
@@ -466,7 +466,7 @@
         <button class="close-btn" onclick="closeDuplicateModal()">&times;</button>
       </div>
       <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
-        Übersicht, welche Feeds parallele Berichte geliefert haben, die zusammengeführt wurden:
+        Übersicht der Quellen, deren Doppelberichte gebündelt wurden:
       </p>
       <div id="duplicate-list" class="modal-body"></div>
       <button class="auth-btn" style="margin-top:16px;" onclick="closeDuplicateModal()">Schließen</button>
@@ -480,16 +480,16 @@
       <div>
         <h1>⚡ News-Hub</h1>
         <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
-          Stand: 02.09.2026, 22:55 Uhr<br>
+          Stand: 02.09.2026, 22:57 Uhr<br>
           <span style="color: var(--accent); cursor: pointer;" id="sidebar-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
           <br><span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: Deskmodder.de">🟡 23/24 Feeds (1 gestört) ℹ️</span>
         </p>
       </div>
       <button class="close-btn" onclick="toggleSidebar()">&times;</button>
     </div>
-    <ul class="category-list" id="category-list">
+    <ul class="source-list" id="source-list">
       <li>
-        <button class="category-btn active" onclick="filterCategory('all', this)">
+        <button class="source-btn active" onclick="filterSource('all', this)">
           <span>Alle Meldungen</span>
           <span class="badge" id="total-badge">0</span>
         </button>
@@ -523,7 +523,8 @@
   <script>
     let rawEncryptedData = "";
     let globalArticles = [];
-    let allCategoriesCount = {};
+    let allSourceCounts = {};
+    const configuredSources = ["mydealz", "mydealz", "ComputerBase", "OMG! Ubuntu!", "9to5Google", "Topthemen - SZ.de", "WinFuture News", "GoogleWatchBlog", "mobiFlip", "Android Headlines", "Android Police", "teltarif.de - TK-IT News komplett", "Düsseldorf | RP ONLINE", "Caschys Blog", "Notebookcheck.com: News RSS Feed", "Deskmodder.de", "heise online News", "Android Authority", "XDA", "Travel-Dealz.de", "SmartDroid.de", "Aktuell - FAZ.NET", "Android Sage", "9to5Linux"];
     const feedHealthData = [{"title": "mydealz", "status": "ok", "code": 200}, {"title": "mydealz", "status": "ok", "code": 200}, {"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 304}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 304}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 304}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de - TK-IT News komplett", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 304}, {"title": "Notebookcheck.com: News RSS Feed", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "exception", "code": "timeout/conn"}, {"title": "heise online News", "status": "ok", "code": 304}, {"title": "Android Authority", "status": "ok", "code": 304}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 304}, {"title": "SmartDroid.de", "status": "ok", "code": 304}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 304}, {"title": "9to5Linux", "status": "ok", "code": 304}];
 
     // --- GitHub Action Dispatch per Browser-Button ---
@@ -709,17 +710,18 @@
 
     function renderUI(articles) {
       const container = document.getElementById('articles-container');
-      const catList = document.getElementById('category-list');
+      const sourceList = document.getElementById('source-list');
       const totalBadge = document.getElementById('total-badge');
 
       totalBadge.textContent = articles.length;
 
       let totalDups = 0;
-      allCategoriesCount = {};
+      allSourceCounts = {};
+      
       articles.forEach(a => {
         totalDups += (a.other_sources || []).length;
-        const c = a.category || "📋 Weitere Meldungen";
-        allCategoriesCount[c] = (allCategoriesCount[c] || 0) + 1;
+        const s = a.source || "Unbekannt";
+        allSourceCounts[s] = (allSourceCounts[s] || 0) + 1;
       });
 
       document.getElementById('current-title').textContent = `Alle Meldungen (${articles.length})`;
@@ -729,15 +731,23 @@
         sidebarDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
       }
 
-      const sortedCats = Object.entries(allCategoriesCount).sort((a, b) => b[1] - a[1]);
-      sortedCats.forEach(([cat, count]) => {
+      const knownSources = new Set([...configuredSources, ...Object.keys(allSourceCounts)]);
+      const sortedSources = Array.from(knownSources).sort((a, b) => {
+        const countA = allSourceCounts[a] || 0;
+        const countB = allSourceCounts[b] || 0;
+        if (countB !== countA) return countB - countA;
+        return a.localeCompare(b);
+      });
+
+      sortedSources.forEach(sourceName => {
+        const count = allSourceCounts[sourceName] || 0;
         const li = document.createElement('li');
         li.innerHTML = `
-          <button class="category-btn" onclick="filterCategory('${escapeHtml(cat)}', this)">
-            <span>${escapeHtml(cat)}</span>
+          <button class="source-btn" onclick="filterSource('${escapeHtml(sourceName)}', this)">
+            <span>${escapeHtml(sourceName)}</span>
             <span class="badge">${count}</span>
           </button>`;
-        catList.appendChild(li);
+        sourceList.appendChild(li);
       });
 
       let htmlCards = "";
@@ -747,8 +757,10 @@
           ? `<span class="feed-others">• Auch bei: ${escapeHtml(a.other_sources.join(", "))}</span>` : "";
         const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" alt="Thumbnail" onerror="this.remove()" />` : "";
 
+        const linkedSources = [a.source, ...(a.other_sources || [])].join(";;;");
+
         htmlCards += `
-          <article class="feed-card" data-id="${linkHash}" data-cat="${escapeHtml(a.category || '📋 Weitere Meldungen')}" data-time="${a.published || ''}">
+          <article class="feed-card" data-id="${linkHash}" data-sources="${escapeHtml(linkedSources)}">
             <div class="feed-content">
               <div class="feed-meta">
                 <span class="feed-source">${escapeHtml(a.source)}</span>
@@ -843,17 +855,17 @@
       localStorage.setItem('read_news', JSON.stringify(list));
     }
 
-    let activeCat = 'all';
-    function filterCategory(cat, btn) {
-      activeCat = cat;
-      document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
+    let activeSource = 'all';
+    function filterSource(source, btn) {
+      activeSource = source;
+      document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
 
-      if (cat === 'all') {
+      if (source === 'all') {
         document.getElementById('current-title').textContent = `Alle Meldungen (${globalArticles.length})`;
       } else {
-        const count = allCategoriesCount[cat] || 0;
-        document.getElementById('current-title').textContent = `${cat} (${count})`;
+        const count = allSourceCounts[source] || 0;
+        document.getElementById('current-title').textContent = `${source} (${count})`;
       }
 
       applyCombinedFilters();
@@ -868,10 +880,11 @@
 
     function applyCombinedFilters() {
       document.querySelectorAll('.feed-card').forEach(card => {
-        const matchesCat = (activeCat === 'all' || card.dataset.cat === activeCat);
+        const cardSources = (card.dataset.sources || "").split(";;;");
+        const matchesSource = (activeSource === 'all' || cardSources.includes(activeSource));
         const text = card.textContent.toLowerCase();
         const matchesSearch = !searchQuery || text.includes(searchQuery);
-        card.style.display = (matchesCat && matchesSearch) ? '' : 'none';
+        card.style.display = (matchesSource && matchesSearch) ? '' : 'none';
       });
     }
 

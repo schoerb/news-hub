@@ -163,8 +163,8 @@
       font-size: 0.9rem;
       color: var(--text-muted);
     }
-    .category-block { margin-bottom: 36px; }
-    .category-title {
+    .source-block { margin-bottom: 36px; }
+    .source-title {
       font-size: 1.25rem;
       color: var(--text-bold);
       margin-bottom: 16px;
@@ -200,7 +200,7 @@
     </div>
     <div class="header">
       <h1>📑 24h Executive Archiv</h1>
-      <p>Stand: 02.09.2026, 22:55 Uhr • Alle Themen der letzten 24 Stunden im Überblick</p>
+      <p>Stand: 02.09.2026, 22:57 Uhr • Alle Themen der letzten 24 Stunden im Überblick</p>
     </div>
     <div class="summary-badge" id="archive-badge">
       Entschlüssle Archiv...
@@ -266,20 +266,22 @@
       });
 
       let totalDups = 0;
-      const cats = {};
+      const sourcesMap = {};
       recent.forEach(a => {
         totalDups += (a.other_sources || []).length;
-        const c = a.category || "📋 Weitere Meldungen";
-        if (!cats[c]) cats[c] = [];
-        cats[c].push(a);
+        const s = a.source || "Unbekannt";
+        if (!sourcesMap[s]) sourcesMap[s] = [];
+        sourcesMap[s].push(a);
       });
 
       document.getElementById('archive-badge').innerHTML = 
         `<strong>${recent.length} Meldungen</strong> erfasst • <strong style="color: var(--accent);">${totalDups} parallele Berichte</strong> gebündelt.`;
 
       let html = "";
-      for (const [catName, items] of Object.entries(cats)) {
-        html += `<div class="category-block"><h2 class="category-title">${escapeHtml(catName)} (${items.length})</h2><div class="archive-grid">`;
+      const sortedSources = Object.entries(sourcesMap).sort((a, b) => b[1].length - a[1].length);
+
+      for (const [sourceName, items] of sortedSources) {
+        html += `<div class="source-block"><h2 class="source-title">${escapeHtml(sourceName)} (${items.length})</h2><div class="archive-grid">`;
         items.forEach(it => {
           const others = (it.other_sources && it.other_sources.length) 
             ? `<span class="feed-others">• Auch bei: ${escapeHtml(it.other_sources.join(", "))}</span>` : "";
