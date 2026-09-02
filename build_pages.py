@@ -1005,7 +1005,9 @@ def render_html_dashboard(feed_health=None):
       <div>
         <h1>⚡ News-Hub</h1>
         <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
-          Stand: __NOW_STR____HEALTH_BLOCK__
+          Stand: __NOW_STR__<br>
+          <span style="color: var(--accent); cursor: pointer;" id="sidebar-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
+          __HEALTH_BLOCK__
         </p>
       </div>
       <button class="close-btn" onclick="toggleSidebar()">&times;</button>
@@ -1031,9 +1033,6 @@ def render_html_dashboard(feed_health=None):
         <button class="menu-toggle" onclick="toggleSidebar()" title="Menü ein-/ausblenden (Taste: [)">☰</button>
         <div>
           <h2 id="current-title">Alle Meldungen</h2>
-          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 3px;" id="header-stats">
-            Lade Artikel...
-          </div>
         </div>
       </div>
       <div class="header-right">
@@ -1237,7 +1236,6 @@ def render_html_dashboard(feed_health=None):
       const container = document.getElementById('articles-container');
       const catList = document.getElementById('category-list');
       const totalBadge = document.getElementById('total-badge');
-      const headerStats = document.getElementById('header-stats');
 
       totalBadge.textContent = articles.length;
 
@@ -1250,7 +1248,11 @@ def render_html_dashboard(feed_health=None):
       });
 
       document.getElementById('current-title').textContent = `Alle Meldungen (${articles.length})`;
-      headerStats.innerHTML = `<span style="color: var(--accent); cursor:pointer;" onclick="openDuplicateModal()" title="Klicken für Dubletten-Details">🧹 ${totalDups} Duplikate bereinigt ℹ️</span>`;
+
+      const sidebarDupInfo = document.getElementById('sidebar-dup-info');
+      if (sidebarDupInfo) {
+        sidebarDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
+      }
 
       const sortedCats = Object.entries(allCategoriesCount).sort((a, b) => b[1] - a[1]);
       sortedCats.forEach(([cat, count]) => {
