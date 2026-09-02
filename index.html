@@ -480,7 +480,9 @@
       <div>
         <h1>⚡ News-Hub</h1>
         <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
-          Stand: 02.09.2026, 22:12 Uhr<br><span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: Deskmodder.de, 9to5Linux">🟡 22/24 Feeds (2 gestört) ℹ️</span>
+          Stand: 02.09.2026, 22:20 Uhr<br>
+          <span style="color: var(--accent); cursor: pointer;" id="sidebar-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
+          <br><span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: 9to5Linux">🟡 23/24 Feeds (1 gestört) ℹ️</span>
         </p>
       </div>
       <button class="close-btn" onclick="toggleSidebar()">&times;</button>
@@ -506,9 +508,6 @@
         <button class="menu-toggle" onclick="toggleSidebar()" title="Menü ein-/ausblenden (Taste: [)">☰</button>
         <div>
           <h2 id="current-title">Alle Meldungen</h2>
-          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 3px;" id="header-stats">
-            Lade Artikel...
-          </div>
         </div>
       </div>
       <div class="header-right">
@@ -525,7 +524,7 @@
     let rawEncryptedData = "";
     let globalArticles = [];
     let allCategoriesCount = {};
-    const feedHealthData = [{"title": "mydealz", "status": "ok", "code": 200}, {"title": "mydealz", "status": "ok", "code": 200}, {"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 304}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 304}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 304}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de - TK-IT News komplett", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com: News RSS Feed", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "exception", "code": "timeout/conn"}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 304}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 304}, {"title": "SmartDroid.de", "status": "ok", "code": 304}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 304}, {"title": "9to5Linux", "status": "exception", "code": "timeout/conn"}];
+    const feedHealthData = [{"title": "mydealz", "status": "ok", "code": 200}, {"title": "mydealz", "status": "ok", "code": 200}, {"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 304}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 304}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 304}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de - TK-IT News komplett", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 304}, {"title": "Notebookcheck.com: News RSS Feed", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "ok", "code": 200}, {"title": "heise online News", "status": "ok", "code": 304}, {"title": "Android Authority", "status": "ok", "code": 304}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 304}, {"title": "SmartDroid.de", "status": "ok", "code": 304}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 304}, {"title": "9to5Linux", "status": "exception", "code": "timeout/conn"}];
 
     // --- GitHub Action Dispatch per Browser-Button ---
     async function triggerWorkflow() {
@@ -712,7 +711,6 @@
       const container = document.getElementById('articles-container');
       const catList = document.getElementById('category-list');
       const totalBadge = document.getElementById('total-badge');
-      const headerStats = document.getElementById('header-stats');
 
       totalBadge.textContent = articles.length;
 
@@ -725,7 +723,11 @@
       });
 
       document.getElementById('current-title').textContent = `Alle Meldungen (${articles.length})`;
-      headerStats.innerHTML = `<span style="color: var(--accent); cursor:pointer;" onclick="openDuplicateModal()" title="Klicken für Dubletten-Details">🧹 ${totalDups} Duplikate bereinigt ℹ️</span>`;
+
+      const sidebarDupInfo = document.getElementById('sidebar-dup-info');
+      if (sidebarDupInfo) {
+        sidebarDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
+      }
 
       const sortedCats = Object.entries(allCategoriesCount).sort((a, b) => b[1] - a[1]);
       sortedCats.forEach(([cat, count]) => {
