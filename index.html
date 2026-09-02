@@ -15,6 +15,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
 
   <style>
+    
     :root {
       --bg: #121418;
       --sidebar-bg: #181b20;
@@ -50,10 +51,95 @@
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background-color: var(--bg);
       color: var(--text);
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+
+    .theme-toggle, .menu-toggle {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 1.1rem;
+      padding: 6px 10px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .theme-toggle:hover, .menu-toggle:hover {
+      background: var(--card-hover);
+      border-color: var(--text-muted);
+    }
+
+    .feed-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform 0.15s ease, border-color 0.15s ease, opacity 0.2s, box-shadow 0.15s ease;
+      outline: none;
+    }
+    .feed-card:hover {
+      background: var(--card-hover);
+      border-color: var(--text-muted);
+      transform: translateY(-2px);
+    }
+    .feed-card.selected {
+      border-color: var(--focus-ring);
+      box-shadow: 0 0 0 2px var(--focus-ring);
+    }
+    .feed-card.read { opacity: 0.4; }
+    .feed-card.read .feed-title { color: var(--text-muted); }
+
+    .feed-content { display: flex; flex-direction: column; flex-grow: 1; }
+    .feed-meta {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 0.75rem;
+      margin-bottom: 8px;
+    }
+    .feed-source { color: var(--accent); font-weight: 600; }
+    .feed-time, .feed-others { color: var(--text-muted); font-size: 0.72rem; }
+
+    .feed-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--text-bold);
+      text-decoration: none;
+      line-height: 1.4;
+      margin-bottom: 8px;
+    }
+    .feed-title:hover { color: var(--link); text-decoration: underline; }
+
+    .feed-summary {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-bottom: 14px;
+      flex-grow: 1;
+    }
+    .feed-summary strong { color: var(--text-bold); font-weight: 600; }
+
+    .feed-thumb {
+      width: 100%;
+      height: 160px;
+      object-fit: cover;
+      border-radius: 6px;
+      margin-top: auto;
+      background: var(--border);
+    }
+
+
+    body {
       display: flex;
       height: 100vh;
       overflow: hidden;
-      transition: background-color 0.2s ease, color 0.2s ease;
     }
 
     #auth-overlay {
@@ -296,23 +382,6 @@
       align-items: center;
       gap: 8px;
     }
-    .menu-toggle, .theme-toggle {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      color: var(--text);
-      font-size: 1.1rem;
-      padding: 6px 10px;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      transition: background 0.15s, border-color 0.15s;
-    }
-    .menu-toggle:hover, .theme-toggle:hover {
-      background: var(--card-hover);
-      border-color: var(--text-muted);
-    }
     .stream-header h2 { font-size: 1.4rem; font-weight: 700; color: var(--text-bold); }
 
     .search-input {
@@ -333,74 +402,6 @@
       grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
       gap: 18px;
       align-items: stretch;
-    }
-
-    .feed-card {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 18px;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      transition: transform 0.15s ease, border-color 0.15s ease, opacity 0.2s, box-shadow 0.15s ease;
-      outline: none;
-    }
-    .feed-card:hover {
-      background: var(--card-hover);
-      border-color: var(--text-muted);
-      transform: translateY(-2px);
-    }
-    .feed-card.selected {
-      border-color: var(--focus-ring);
-      box-shadow: 0 0 0 2px var(--focus-ring);
-    }
-    .feed-card.read { opacity: 0.4; }
-    .feed-card.read .feed-title { color: var(--text-muted); }
-
-    .feed-content {
-      display: flex;
-      flex-direction: column;
-      flex-grow: 1;
-    }
-    .feed-meta {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 6px;
-      font-size: 0.75rem;
-      margin-bottom: 8px;
-    }
-    .feed-source { color: var(--accent); font-weight: 600; }
-    .feed-time { color: var(--text-muted); font-size: 0.72rem; }
-    .feed-others { color: var(--text-muted); font-size: 0.72rem; }
-
-    .feed-title {
-      font-size: 1.05rem;
-      font-weight: 600;
-      color: var(--text-bold);
-      text-decoration: none;
-      line-height: 1.4;
-      margin-bottom: 8px;
-    }
-    .feed-title:hover { color: var(--link); text-decoration: underline; }
-
-    .feed-summary {
-      font-size: 0.88rem;
-      color: var(--text-muted);
-      line-height: 1.5;
-      margin-bottom: 14px;
-      flex-grow: 1;
-    }
-    .feed-summary strong { color: var(--text-bold); font-weight: 600; }
-
-    .feed-thumb {
-      width: 100%;
-      height: 160px;
-      object-fit: cover;
-      border-radius: 6px;
-      margin-top: auto;
-      background: var(--border);
     }
 
     @media (max-width: 768px) {
@@ -479,9 +480,7 @@
       <div>
         <h1>⚡ News-Hub</h1>
         <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
-          Stand: 02.09.2026, 18:55 Uhr<br>
-          <span style="color: var(--accent); cursor: pointer;" id="sidebar-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
-          <br><span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: 9to5Linux">🟡 23/24 Feeds (1 gestört) ℹ️</span>
+          Stand: 02.09.2026, 21:55 Uhr<br><span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: 9to5Linux">🟡 23/24 Feeds (1 gestört) ℹ️</span>
         </p>
       </div>
       <button class="close-btn" onclick="toggleSidebar()">&times;</button>
@@ -507,13 +506,14 @@
         <button class="menu-toggle" onclick="toggleSidebar()" title="Menü ein-/ausblenden (Taste: [)">☰</button>
         <div>
           <h2 id="current-title">Alle Meldungen</h2>
-          <span style="font-size: 0.78rem; color: var(--text-muted);" id="header-stats">
+          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 3px;" id="header-stats">
             Lade Artikel...
-          </span>
+          </div>
         </div>
       </div>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Artikel durchsuchen..." oninput="filterSearch(this.value)">
+        <button class="menu-toggle" id="refresh-btn" onclick="triggerWorkflow()" title="News sofort via GitHub Action aktualisieren">🔄</button>
         <button class="theme-toggle" id="theme-btn" onclick="toggleTheme()" title="Dark/Light Mode umschalten">🌓</button>
       </div>
     </div>
@@ -524,7 +524,54 @@
   <script>
     let rawEncryptedData = "";
     let globalArticles = [];
-    const feedHealthData = [{"title": "mydealz", "status": "ok", "code": 200}, {"title": "mydealz", "status": "ok", "code": 200}, {"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 200}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 200}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 304}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de - TK-IT News komplett", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com: News RSS Feed", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "ok", "code": 200}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 200}, {"title": "SmartDroid.de", "status": "ok", "code": 304}, {"title": "9to5Linux", "status": "error", "code": 403}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 304}];
+    let allCategoriesCount = {};
+    const feedHealthData = [{"title": "mydealz", "status": "ok", "code": 200}, {"title": "mydealz", "status": "ok", "code": 200}, {"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 200}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 200}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 304}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de - TK-IT News komplett", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com: News RSS Feed", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "ok", "code": 200}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 200}, {"title": "SmartDroid.de", "status": "ok", "code": 304}, {"title": "9to5Linux", "status": "error", "code": 403}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 200}];
+
+    // --- GitHub Action Dispatch per Browser-Button ---
+    async function triggerWorkflow() {
+      const btn = document.getElementById('refresh-btn');
+      let token = localStorage.getItem('gh_dispatch_token');
+
+      if (!token) {
+        token = prompt("Bitte gib deinen GitHub Personal Access Token ein (wird nur lokal auf diesem Gerät gespeichert):");
+        if (!token) return;
+        localStorage.setItem('gh_dispatch_token', token.trim());
+      }
+
+      btn.style.opacity = '0.5';
+      btn.style.pointerEvents = 'none';
+      btn.textContent = '⏳';
+
+      const repoOwner = 'schoerb';
+      const repoName = 'news-hub';
+      const workflowFileName = 'deploy.yml';
+
+      try {
+        const response = await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/actions/workflows/${workflowFileName}/dispatches`, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/vnd.github+json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ ref: 'main' })
+        });
+
+        if (response.status === 204) {
+          alert('🚀 GitHub Action gestartet! Neue Artikel sind in ca. 1-2 Minuten bereit.');
+        } else if (response.status === 401 || response.status === 403) {
+          localStorage.removeItem('gh_dispatch_token');
+          alert('❌ Token ungültig oder abgelaufen. Bitte erneut versuchen.');
+        } else {
+          alert(`⚠️ GitHub API meldet Status: ${response.status}`);
+        }
+      } catch (err) {
+        alert('Fehler beim Verbinden zur GitHub API: ' + err.message);
+      } finally {
+        btn.style.opacity = '1';
+        btn.style.pointerEvents = 'auto';
+        btn.textContent = '🔄';
+      }
+    }
 
     // --- Feed Health Modal ---
     function openHealthModal() {
@@ -666,22 +713,21 @@
       const catList = document.getElementById('category-list');
       const totalBadge = document.getElementById('total-badge');
       const headerStats = document.getElementById('header-stats');
-      const sidebarDupInfo = document.getElementById('sidebar-dup-info');
 
       totalBadge.textContent = articles.length;
 
       let totalDups = 0;
-      const catCounts = {};
+      allCategoriesCount = {};
       articles.forEach(a => {
         totalDups += (a.other_sources || []).length;
         const c = a.category || "📋 Weitere Meldungen";
-        catCounts[c] = (catCounts[c] || 0) + 1;
+        allCategoriesCount[c] = (allCategoriesCount[c] || 0) + 1;
       });
 
-      headerStats.innerHTML = `${articles.length} Themen • <strong style="color: var(--accent); cursor:pointer;" onclick="openDuplicateModal()" title="Klicken für Dubletten-Details">${totalDups} Dubletten ℹ️</strong> zusammengeführt`;
-      sidebarDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
+      document.getElementById('current-title').textContent = `Alle Meldungen (${articles.length})`;
+      headerStats.innerHTML = `<span style="color: var(--accent); cursor:pointer;" onclick="openDuplicateModal()" title="Klicken für Dubletten-Details">🧹 ${totalDups} Duplikate bereinigt ℹ️</span>`;
 
-      const sortedCats = Object.entries(catCounts).sort((a, b) => b[1] - a[1]);
+      const sortedCats = Object.entries(allCategoriesCount).sort((a, b) => b[1] - a[1]);
       sortedCats.forEach(([cat, count]) => {
         const li = document.createElement('li');
         li.innerHTML = `
@@ -800,7 +846,14 @@
       activeCat = cat;
       document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      document.getElementById('current-title').textContent = (cat === 'all') ? 'Alle Meldungen' : cat;
+
+      if (cat === 'all') {
+        document.getElementById('current-title').textContent = `Alle Meldungen (${globalArticles.length})`;
+      } else {
+        const count = allCategoriesCount[cat] || 0;
+        document.getElementById('current-title').textContent = `${cat} (${count})`;
+      }
+
       applyCombinedFilters();
       if (window.innerWidth <= 768) toggleSidebar();
     }
@@ -820,7 +873,6 @@
       });
     }
 
-    // --- Sidebar Toggle für Desktop & Mobile ---
     function initSidebarState() {
       if (window.innerWidth > 768) {
         const isClosed = localStorage.getItem('sidebar_closed') === 'true';

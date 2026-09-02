@@ -7,8 +7,10 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
   <style>
+    
     :root {
       --bg: #121418;
+      --sidebar-bg: #181b20;
       --card-bg: #1e2229;
       --card-hover: #262b34;
       --border: #2e3440;
@@ -16,11 +18,14 @@
       --text-muted: #94a3b8;
       --text-bold: #f1f5f9;
       --accent: #2ecc71;
+      --accent-dim: rgba(46, 204, 113, 0.15);
       --link: #60a5fa;
+      --focus-ring: #3b82f6;
     }
 
     [data-theme="light"] {
       --bg: #f8fafc;
+      --sidebar-bg: #ffffff;
       --card-bg: #ffffff;
       --card-hover: #f1f5f9;
       --border: #e2e8f0;
@@ -28,7 +33,9 @@
       --text-muted: #64748b;
       --text-bold: #0f172a;
       --accent: #16a34a;
+      --accent-dim: rgba(22, 163, 74, 0.12);
       --link: #2563eb;
+      --focus-ring: #2563eb;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -36,30 +43,10 @@
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background-color: var(--bg);
       color: var(--text);
-      padding: 24px 40px;
-      line-height: 1.6;
       transition: background-color 0.2s ease, color 0.2s ease;
-      min-height: 100vh;
     }
-    .container { max-width: 1300px; margin: 0 auto; }
-    .top-nav {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--border);
-    }
-    .back-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      color: var(--accent);
-      text-decoration: none;
-      font-size: 0.9rem;
-      font-weight: 600;
-    }
-    .theme-toggle {
+
+    .theme-toggle, .menu-toggle {
       background: var(--card-bg);
       border: 1px solid var(--border);
       border-radius: 6px;
@@ -72,41 +59,9 @@
       justify-content: center;
       transition: background 0.15s, border-color 0.15s;
     }
-    .theme-toggle:hover {
+    .theme-toggle:hover, .menu-toggle:hover {
       background: var(--card-hover);
       border-color: var(--text-muted);
-    }
-    .header {
-      margin-bottom: 24px;
-    }
-    .header h1 { font-size: 1.6rem; color: var(--text-bold); font-weight: 700; }
-    .header p { color: var(--text-muted); font-size: 0.85rem; margin-top: 4px; }
-    .summary-badge {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      padding: 12px 18px;
-      border-radius: 8px;
-      margin-bottom: 28px;
-      font-size: 0.9rem;
-      color: var(--text-muted);
-    }
-    .category-block { margin-bottom: 36px; }
-    .category-title {
-      font-size: 1.25rem;
-      color: var(--text-bold);
-      margin-bottom: 16px;
-      border-bottom: 2px solid var(--accent);
-      display: inline-block;
-      padding-bottom: 4px;
-      font-weight: 700;
-    }
-
-    /* Cards Grid */
-    .archive-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-      gap: 18px;
-      align-items: stretch;
     }
 
     .feed-card {
@@ -117,7 +72,7 @@
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+      transition: transform 0.15s ease, border-color 0.15s ease, opacity 0.2s, box-shadow 0.15s ease;
       outline: none;
     }
     .feed-card:hover {
@@ -125,11 +80,14 @@
       border-color: var(--text-muted);
       transform: translateY(-2px);
     }
-    .feed-content {
-      display: flex;
-      flex-direction: column;
-      flex-grow: 1;
+    .feed-card.selected {
+      border-color: var(--focus-ring);
+      box-shadow: 0 0 0 2px var(--focus-ring);
     }
+    .feed-card.read { opacity: 0.4; }
+    .feed-card.read .feed-title { color: var(--text-muted); }
+
+    .feed-content { display: flex; flex-direction: column; flex-grow: 1; }
     .feed-meta {
       display: flex;
       align-items: center;
@@ -139,8 +97,7 @@
       margin-bottom: 8px;
     }
     .feed-source { color: var(--accent); font-weight: 600; }
-    .feed-time { color: var(--text-muted); font-size: 0.72rem; }
-    .feed-others { color: var(--text-muted); font-size: 0.72rem; }
+    .feed-time, .feed-others { color: var(--text-muted); font-size: 0.72rem; }
 
     .feed-title {
       font-size: 1.05rem;
@@ -170,6 +127,60 @@
       background: var(--border);
     }
 
+
+    body {
+      padding: 24px 40px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    .container { max-width: 1300px; margin: 0 auto; }
+    .top-nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .back-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+    .header { margin-bottom: 24px; }
+    .header h1 { font-size: 1.6rem; color: var(--text-bold); font-weight: 700; }
+    .header p { color: var(--text-muted); font-size: 0.85rem; margin-top: 4px; }
+    .summary-badge {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      padding: 12px 18px;
+      border-radius: 8px;
+      margin-bottom: 28px;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+    .category-block { margin-bottom: 36px; }
+    .category-title {
+      font-size: 1.25rem;
+      color: var(--text-bold);
+      margin-bottom: 16px;
+      border-bottom: 2px solid var(--accent);
+      display: inline-block;
+      padding-bottom: 4px;
+      font-weight: 700;
+    }
+
+    .archive-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 18px;
+      align-items: stretch;
+    }
+
     @media (max-width: 768px) {
       body { padding: 16px 12px; }
       .archive-grid {
@@ -189,7 +200,7 @@
     </div>
     <div class="header">
       <h1>📑 24h Executive Archiv</h1>
-      <p>Stand: 02.09.2026, 18:55 Uhr • Alle Themen der letzten 24 Stunden im Überblick</p>
+      <p>Stand: 02.09.2026, 21:55 Uhr • Alle Themen der letzten 24 Stunden im Überblick</p>
     </div>
     <div class="summary-badge" id="archive-badge">
       Entschlüssle Archiv...
