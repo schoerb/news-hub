@@ -128,7 +128,6 @@ def get_private_priorities() -> dict:
 # --- Pydantic Schemas für Gemini ---
 class DeltaItem(BaseModel):
     id: int = Field(description="Index des Artikels aus dem Batch")
-    category: str = Field(description="Themenkategorie mit passendem Emoji")
     summary: str = Field(description="Genau 1 prägnanter deutscher Satz. Schlüsselbegriffe mit **fett** hervorheben")
     use_image: bool = Field(default=False, description="True NUR wenn das Bild ein konkretes Gerät, UI-Element oder einen Chart zeigt")
 
@@ -167,17 +166,17 @@ def parse_opml():
 
     feeds = []
     for node in tree.findall(".//outline[@xmlUrl]"):
-        title = (node.get("title") or node.get("text") or "Feed").strip()
+        source_name = (node.get("text") or node.get("title") or "Feed").strip()
         url = node.get("xmlUrl", "").strip()
         if url:
             prio_attr = node.get("priority")
             if prio_attr and prio_attr.isdigit():
                 prio = int(prio_attr)
             else:
-                prio = priorities.get(title, DEFAULT_PRIO)
+                prio = priorities.get(source_name, DEFAULT_PRIO)
 
             feeds.append({
-                "title": title,
+                "title": source_name,
                 "url": url,
                 "priority": prio,
             })
@@ -407,9 +406,8 @@ def summarize_chunk_with_gemini(client, chunk_items, max_retries=3):
 
     prompt = f"""
 Fasse diese Tech-Artikel zusammen:
-1. Ordne jeden Artikel einer Kategorie zu (z.B. "📱 Mobile & Gadgets", "💻 Hardware & PC", "🔐 Security & Privacy", "🌐 Web & Software").
-2. Genau 1 prägnanter deutscher Satz pro Artikel. Hebe Schlüsselbegriffe mit **fett** hervor.
-3. 'use_image': True NUR wenn das Bild ein echtes Produkt, ein UI-Element oder einen Benchmark zeigt.
+1. Genau 1 prägnanter deutscher Satz pro Artikel. Hebe Schlüsselbegriffe mit **fett** hervor.
+2. 'use_image': True NUR wenn das Bild ein echtes Produkt, ein UI-Element oder einen Benchmark zeigt.
 
 Artikel:
 {json.dumps(payload, ensure_ascii=False)}
@@ -420,15 +418,15 @@ Artikel:
     for attempt in range(max_retries):
         selected_model = models[min(attempt, len(models) - 1)]
         try:
-            chat = client.chats.create(
+            res = client.models.generate_content(
                 model=selected_model,
+                contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.2,
                     response_mime_type="application/json",
                     response_schema=DeltaBatchResponse,
                 ),
             )
-            res = chat.send_message(prompt)
             parsed = DeltaBatchResponse.model_validate_json(res.text)
 
             processed = []
@@ -444,7 +442,6 @@ Artikel:
                         "source": orig["source"],
                         "other_sources": orig.get("other_sources", []),
                         "summary": clean_sum,
-                        "category": item.category,
                         "image": orig["image"] if item.use_image else None,
                         "published": orig["published"],
                         "priority": orig.get("priority", DEFAULT_PRIO),
@@ -461,7 +458,6 @@ Artikel:
             "source": o["source"],
             "other_sources": o.get("other_sources", []),
             "summary": html.escape(o["summary"]),
-            "category": "📋 Weitere Meldungen",
             "image": o["image"],
             "published": o["published"],
             "priority": o.get("priority", DEFAULT_PRIO),
@@ -504,7 +500,7 @@ def expire_old_articles(articles):
     return valid
 
 
-# --- Gemeinsames CSS für Dashboard und Archiv ---
+# --- Gemeinsames CSS ---
 SHARED_CSS = """
     :root {
       --bg: #121418;
@@ -627,7 +623,7 @@ SHARED_CSS = """
 """
 
 
-def render_html_dashboard(feed_health=None):
+def render_html_dashboard(feed_health=None, feeds=None):
     now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y, %H:%M Uhr")
     health_text = ""
     health_json = "[]"
@@ -641,6 +637,9 @@ def render_html_dashboard(feed_health=None):
         else:
             failed_names = ", ".join(f["title"] for f in failed[:2])
             health_text = f'<span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: {failed_names}">🟡 {ok_feeds}/{total_feeds} Feeds ({len(failed)} gestört) ℹ️</span>'
+
+    all_source_names = [f["title"] for f in (feeds or [])]
+    all_sources_json = json.dumps(all_source_names, ensure_ascii=False)
 
     template = """<!DOCTYPE html>
 <html lang="de" data-theme="dark">
@@ -807,8 +806,8 @@ def render_html_dashboard(feed_health=None):
       line-height: 1;
     }
     .close-btn:hover { color: var(--text); }
-    .category-list { list-style: none; padding: 12px; overflow-y: auto; flex-grow: 1; min-width: 290px; }
-    .category-btn {
+    .source-list { list-style: none; padding: 12px; overflow-y: auto; flex-grow: 1; min-width: 290px; }
+    .source-btn {
       width: 100%;
       text-align: left;
       padding: 10px 14px;
@@ -825,7 +824,7 @@ def render_html_dashboard(feed_health=None):
       align-items: center;
       transition: all 0.15s ease;
     }
-    .category-btn:hover, .category-btn.active {
+    .source-btn:hover, .source-btn.active {
       background: var(--accent-dim);
       color: var(--accent);
       font-weight: 600;
@@ -837,7 +836,7 @@ def render_html_dashboard(feed_health=None):
       font-size: 0.7rem;
       color: var(--text);
     }
-    .category-btn.active .badge { background: var(--accent); color: #fff; }
+    .source-btn.active .badge { background: var(--accent); color: #fff; }
 
     .sidebar-footer {
       padding: 16px;
@@ -991,7 +990,7 @@ def render_html_dashboard(feed_health=None):
         <button class="close-btn" onclick="closeDuplicateModal()">&times;</button>
       </div>
       <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
-        Übersicht, welche Feeds parallele Berichte geliefert haben, die zusammengeführt wurden:
+        Übersicht der Quellen, deren Doppelberichte gebündelt wurden:
       </p>
       <div id="duplicate-list" class="modal-body"></div>
       <button class="auth-btn" style="margin-top:16px;" onclick="closeDuplicateModal()">Schließen</button>
@@ -1012,9 +1011,9 @@ def render_html_dashboard(feed_health=None):
       </div>
       <button class="close-btn" onclick="toggleSidebar()">&times;</button>
     </div>
-    <ul class="category-list" id="category-list">
+    <ul class="source-list" id="source-list">
       <li>
-        <button class="category-btn active" onclick="filterCategory('all', this)">
+        <button class="source-btn active" onclick="filterSource('all', this)">
           <span>Alle Meldungen</span>
           <span class="badge" id="total-badge">0</span>
         </button>
@@ -1048,7 +1047,8 @@ def render_html_dashboard(feed_health=None):
   <script>
     let rawEncryptedData = "";
     let globalArticles = [];
-    let allCategoriesCount = {};
+    let allSourceCounts = {};
+    const configuredSources = __CONFIGURED_SOURCES__;
     const feedHealthData = __HEALTH_DATA__;
 
     // --- GitHub Action Dispatch per Browser-Button ---
@@ -1234,17 +1234,18 @@ def render_html_dashboard(feed_health=None):
 
     function renderUI(articles) {
       const container = document.getElementById('articles-container');
-      const catList = document.getElementById('category-list');
+      const sourceList = document.getElementById('source-list');
       const totalBadge = document.getElementById('total-badge');
 
       totalBadge.textContent = articles.length;
 
       let totalDups = 0;
-      allCategoriesCount = {};
+      allSourceCounts = {};
+      
       articles.forEach(a => {
         totalDups += (a.other_sources || []).length;
-        const c = a.category || "📋 Weitere Meldungen";
-        allCategoriesCount[c] = (allCategoriesCount[c] || 0) + 1;
+        const s = a.source || "Unbekannt";
+        allSourceCounts[s] = (allSourceCounts[s] || 0) + 1;
       });
 
       document.getElementById('current-title').textContent = `Alle Meldungen (${articles.length})`;
@@ -1254,15 +1255,23 @@ def render_html_dashboard(feed_health=None):
         sidebarDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
       }
 
-      const sortedCats = Object.entries(allCategoriesCount).sort((a, b) => b[1] - a[1]);
-      sortedCats.forEach(([cat, count]) => {
+      const knownSources = new Set([...configuredSources, ...Object.keys(allSourceCounts)]);
+      const sortedSources = Array.from(knownSources).sort((a, b) => {
+        const countA = allSourceCounts[a] || 0;
+        const countB = allSourceCounts[b] || 0;
+        if (countB !== countA) return countB - countA;
+        return a.localeCompare(b);
+      });
+
+      sortedSources.forEach(sourceName => {
+        const count = allSourceCounts[sourceName] || 0;
         const li = document.createElement('li');
         li.innerHTML = `
-          <button class="category-btn" onclick="filterCategory('${escapeHtml(cat)}', this)">
-            <span>${escapeHtml(cat)}</span>
+          <button class="source-btn" onclick="filterSource('${escapeHtml(sourceName)}', this)">
+            <span>${escapeHtml(sourceName)}</span>
             <span class="badge">${count}</span>
           </button>`;
-        catList.appendChild(li);
+        sourceList.appendChild(li);
       });
 
       let htmlCards = "";
@@ -1272,8 +1281,10 @@ def render_html_dashboard(feed_health=None):
           ? `<span class="feed-others">• Auch bei: ${escapeHtml(a.other_sources.join(", "))}</span>` : "";
         const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" alt="Thumbnail" onerror="this.remove()" />` : "";
 
+        const linkedSources = [a.source, ...(a.other_sources || [])].join(";;;");
+
         htmlCards += `
-          <article class="feed-card" data-id="${linkHash}" data-cat="${escapeHtml(a.category || '📋 Weitere Meldungen')}" data-time="${a.published || ''}">
+          <article class="feed-card" data-id="${linkHash}" data-sources="${escapeHtml(linkedSources)}">
             <div class="feed-content">
               <div class="feed-meta">
                 <span class="feed-source">${escapeHtml(a.source)}</span>
@@ -1368,17 +1379,17 @@ def render_html_dashboard(feed_health=None):
       localStorage.setItem('read_news', JSON.stringify(list));
     }
 
-    let activeCat = 'all';
-    function filterCategory(cat, btn) {
-      activeCat = cat;
-      document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
+    let activeSource = 'all';
+    function filterSource(source, btn) {
+      activeSource = source;
+      document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
 
-      if (cat === 'all') {
+      if (source === 'all') {
         document.getElementById('current-title').textContent = `Alle Meldungen (${globalArticles.length})`;
       } else {
-        const count = allCategoriesCount[cat] || 0;
-        document.getElementById('current-title').textContent = `${cat} (${count})`;
+        const count = allSourceCounts[source] || 0;
+        document.getElementById('current-title').textContent = `${source} (${count})`;
       }
 
       applyCombinedFilters();
@@ -1393,10 +1404,11 @@ def render_html_dashboard(feed_health=None):
 
     function applyCombinedFilters() {
       document.querySelectorAll('.feed-card').forEach(card => {
-        const matchesCat = (activeCat === 'all' || card.dataset.cat === activeCat);
+        const cardSources = (card.dataset.sources || "").split(";;;");
+        const matchesSource = (activeSource === 'all' || cardSources.includes(activeSource));
         const text = card.textContent.toLowerCase();
         const matchesSearch = !searchQuery || text.includes(searchQuery);
-        card.style.display = (matchesCat && matchesSearch) ? '' : 'none';
+        card.style.display = (matchesSource && matchesSearch) ? '' : 'none';
       });
     }
 
@@ -1491,7 +1503,8 @@ def render_html_dashboard(feed_health=None):
     return template.replace("__SHARED_CSS__", SHARED_CSS)\
                    .replace("__NOW_STR__", now_str)\
                    .replace("__HEALTH_BLOCK__", health_replacement)\
-                   .replace("__HEALTH_DATA__", health_json)
+                   .replace("__HEALTH_DATA__", health_json)\
+                   .replace("__CONFIGURED_SOURCES__", all_sources_json)
 
 
 def render_archive_html():
@@ -1543,8 +1556,8 @@ def render_archive_html():
       font-size: 0.9rem;
       color: var(--text-muted);
     }
-    .category-block { margin-bottom: 36px; }
-    .category-title {
+    .source-block { margin-bottom: 36px; }
+    .source-title {
       font-size: 1.25rem;
       color: var(--text-bold);
       margin-bottom: 16px;
@@ -1646,20 +1659,22 @@ def render_archive_html():
       });
 
       let totalDups = 0;
-      const cats = {};
+      const sourcesMap = {};
       recent.forEach(a => {
         totalDups += (a.other_sources || []).length;
-        const c = a.category || "📋 Weitere Meldungen";
-        if (!cats[c]) cats[c] = [];
-        cats[c].push(a);
+        const s = a.source || "Unbekannt";
+        if (!sourcesMap[s]) sourcesMap[s] = [];
+        sourcesMap[s].push(a);
       });
 
       document.getElementById('archive-badge').innerHTML = 
         `<strong>${recent.length} Meldungen</strong> erfasst • <strong style="color: var(--accent);">${totalDups} parallele Berichte</strong> gebündelt.`;
 
       let html = "";
-      for (const [catName, items] of Object.entries(cats)) {
-        html += `<div class="category-block"><h2 class="category-title">${escapeHtml(catName)} (${items.length})</h2><div class="archive-grid">`;
+      const sortedSources = Object.entries(sourcesMap).sort((a, b) => b[1].length - a[1].length);
+
+      for (const [sourceName, items] of sortedSources) {
+        html += `<div class="source-block"><h2 class="source-title">${escapeHtml(sourceName)} (${items.length})</h2><div class="archive-grid">`;
         items.forEach(it => {
           const others = (it.other_sources && it.other_sources.length) 
             ? `<span class="feed-others">• Auch bei: ${escapeHtml(it.other_sources.join(", "))}</span>` : "";
@@ -1729,7 +1744,7 @@ if __name__ == "__main__":
     # 4. Batch-Deduplizierung
     bundled_new = consolidate_articles(truly_new_items)
 
-    # 5. Echte Unikate an Gemini senden
+    # 5. Echte Unikate an Gemini senden (ohne Kategorisierung)
     if bundled_new:
         processed_new = summarize_delta_with_gemini(bundled_new)
         combined_articles = processed_new + cached_articles
@@ -1739,7 +1754,7 @@ if __name__ == "__main__":
     # 6. Globaler Bereinigungslauf
     cleaned_articles = consolidate_articles(combined_articles)
 
-    # 7. Streng chronologisch sortieren
+    # 7. Streng chronologisch sortieren & ungenutzte Server-Felder (wie priority) fürs Frontend strippen
     def parse_pub_date(a):
         try:
             return datetime.datetime.fromisoformat(a.get("published", "").replace("Z", "+00:00"))
@@ -1748,8 +1763,29 @@ if __name__ == "__main__":
 
     final_articles = sorted(cleaned_articles, key=parse_pub_date, reverse=True)
 
+    frontend_articles = [
+        {
+            "title": a["title"],
+            "link": a["link"],
+            "source": a["source"],
+            "other_sources": a.get("other_sources", []),
+            "summary": a["summary"],
+            "image": a.get("image"),
+            "published": a.get("published"),
+        }
+        for a in final_articles
+    ]
+
+    # Prüfen, ob sich inhaltlich überhaupt etwas geändert hat
+    has_changes = bool(bundled_new) or (len(cached_articles) != len(cleaned_articles))
+
+    # GITHUB_OUTPUT für die Workflow-Steuerung setzen
+    if "GITHUB_OUTPUT" in os.environ:
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as gh_out:
+            gh_out.write(f"deploy={'true' if has_changes else 'false'}\n")
+
     # 8. State kompakt serialisieren und verschlüsseln
-    articles_json = json.dumps(final_articles, ensure_ascii=False, separators=(',', ':'))
+    articles_json = json.dumps(frontend_articles, ensure_ascii=False, separators=(',', ':'))
     if page_password:
         encrypted_payload = encrypt_payload(articles_json, page_password)
         with open("public/data.json", "w", encoding="utf-8") as f:
@@ -1759,7 +1795,7 @@ if __name__ == "__main__":
             f.write(articles_json)
 
     # 9. HTML-Seiten generieren
-    html_page = render_html_dashboard(feed_health)
+    html_page = render_html_dashboard(feed_health, feeds)
     with open("public/index.html", "w", encoding="utf-8") as f:
         f.write(html_page)
 
