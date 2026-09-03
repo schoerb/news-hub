@@ -1,0 +1,5 @@
+feedparser
+google-genai
+pydantic
+requests
+cryptography
