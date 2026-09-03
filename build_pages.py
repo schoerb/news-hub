@@ -215,6 +215,18 @@ def extract_image(entry):
     return None
 
 
+def parse_timestamp(iso_or_obj) -> int:
+    if isinstance(iso_or_obj, (int, float)):
+        return int(iso_or_obj)
+    if not iso_or_obj:
+        return 0
+    try:
+        dt = datetime.datetime.fromisoformat(str(iso_or_obj).replace("Z", "+00:00"))
+        return int(dt.timestamp())
+    except Exception:
+        return 0
+
+
 def load_cached_state():
     articles = []
     cache_meta = {}
@@ -247,11 +259,15 @@ def load_cached_state():
         except Exception:
             pass
 
+    for a in articles:
+        a["_ts"] = parse_timestamp(a.get("published"))
+
     return articles, cache_meta
 
 
 def fetch_all_feeds(feeds, cache_meta):
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=MAX_RETENTION_HOURS)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cutoff_ts = int((now - datetime.timedelta(hours=MAX_RETENTION_HOURS)).timestamp())
     new_cache_meta = dict(cache_meta)
     feed_health = []
 
@@ -292,13 +308,21 @@ def fetch_all_feeds(feeds, cache_meta):
 
             items = []
             for e in parsed.entries:
-                pub = None
+                entry_ts = None
+                pub_iso = None
                 if hasattr(e, "published_parsed") and e.published_parsed:
-                    pub = datetime.datetime(*e.published_parsed[:6], tzinfo=datetime.timezone.utc)
+                    dt = datetime.datetime(*e.published_parsed[:6], tzinfo=datetime.timezone.utc)
+                    entry_ts = int(dt.timestamp())
+                    pub_iso = dt.isoformat()
                 elif hasattr(e, "updated_parsed") and e.updated_parsed:
-                    pub = datetime.datetime(*e.updated_parsed[:6], tzinfo=datetime.timezone.utc)
+                    dt = datetime.datetime(*e.updated_parsed[:6], tzinfo=datetime.timezone.utc)
+                    entry_ts = int(dt.timestamp())
+                    pub_iso = dt.isoformat()
+                else:
+                    entry_ts = int(now.timestamp())
+                    pub_iso = now.isoformat()
 
-                if not pub or pub > cutoff:
+                if entry_ts > cutoff_ts:
                     summary = re.sub(r"<[^>]+>", " ", e.get("summary", ""))
                     items.append({
                         "title": e.title.strip(),
@@ -307,7 +331,8 @@ def fetch_all_feeds(feeds, cache_meta):
                         "image": extract_image(e),
                         "source": f["title"].strip(),
                         "priority": f["priority"],
-                        "published": pub.isoformat() if pub else datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        "published": pub_iso,
+                        "_ts": entry_ts,
                     })
             return (items, {"title": f["title"], "status": "ok", "code": r.status_code})
         except Exception:
@@ -340,24 +365,20 @@ def extract_keywords(title: str) -> tuple[set, set]:
     return keywords, numbers
 
 
-def is_duplicate(title_a: str, title_b: str) -> bool:
-    kw_a, num_a = extract_keywords(title_a)
-    kw_b, num_b = extract_keywords(title_b)
+def is_duplicate(title_a: str, title_b: str, memo_a=None, memo_b=None) -> bool:
+    kw_a, num_a = memo_a if memo_a else extract_keywords(title_a)
+    kw_b, num_b = memo_b if memo_b else extract_keywords(title_b)
 
-    common_nums = num_a & num_b
-    common_kws = kw_a & kw_b
-
-    if common_nums and common_kws:
+    if (num_a & num_b) and (kw_a & kw_b):
         return True
 
     sub_matches = set()
     for wa in kw_a:
         for wb in kw_b:
-            if len(wa) >= 4 and len(wb) >= 4:
-                if wa[:4] == wb[:4]:
-                    sub_matches.add(wa[:4])
+            if len(wa) >= 4 and len(wb) >= 4 and wa[:4] == wb[:4]:
+                sub_matches.add(wa[:4])
 
-    combined_overlap = len(common_kws | sub_matches)
+    combined_overlap = len((kw_a & kw_b) | sub_matches)
     min_len = min(len(kw_a), len(kw_b))
 
     if combined_overlap >= 3 or (min_len > 0 and (combined_overlap / min_len) >= 0.33):
@@ -371,11 +392,13 @@ def is_duplicate(title_a: str, title_b: str) -> bool:
 def consolidate_articles(articles: list[dict]) -> list[dict]:
     sorted_arts = sorted(articles, key=lambda x: x.get("priority", DEFAULT_PRIO), reverse=True)
     unique_list = []
+    cached_features = []
 
     for item in sorted_arts:
+        feat = extract_keywords(item["title"])
         match = None
-        for existing in unique_list:
-            if is_duplicate(item["title"], existing["title"]):
+        for idx, existing in enumerate(unique_list):
+            if is_duplicate(item["title"], existing["title"], feat, cached_features[idx]):
                 match = existing
                 break
 
@@ -388,6 +411,7 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
             item_copy = dict(item)
             item_copy.setdefault("other_sources", [])
             unique_list.append(item_copy)
+            cached_features.append(feat)
 
     return unique_list
 
@@ -444,7 +468,7 @@ Artikel:
                         "summary": clean_sum,
                         "image": orig["image"] if item.use_image else None,
                         "published": orig["published"],
-                        "priority": orig.get("priority", DEFAULT_PRIO),
+                        "_ts": orig.get("_ts", 0),
                     })
             return processed
         except Exception:
@@ -460,7 +484,7 @@ Artikel:
             "summary": html.escape(o["summary"]),
             "image": o["image"],
             "published": o["published"],
-            "priority": o.get("priority", DEFAULT_PRIO),
+            "_ts": o.get("_ts", 0),
         }
         for o in chunk_items
     ]
@@ -476,31 +500,26 @@ def summarize_delta_with_gemini(new_items):
 
     client = genai.Client(api_key=api_key)
     chunk_size = 25
-    all_processed = []
+    chunks = [new_items[i : i + chunk_size] for i in range(0, len(new_items), chunk_size)]
 
-    for i in range(0, len(new_items), chunk_size):
-        chunk = new_items[i : i + chunk_size]
-        chunk_res = summarize_chunk_with_gemini(client, chunk)
-        all_processed.extend(chunk_res)
-        time.sleep(1)
+    if len(chunks) == 1:
+        return summarize_chunk_with_gemini(client, chunks[0])
+
+    all_processed = []
+    with ThreadPoolExecutor(max_workers=min(len(chunks), 3)) as ex:
+        futures = [ex.submit(summarize_chunk_with_gemini, client, c) for c in chunks]
+        for f in futures:
+            all_processed.extend(f.result())
 
     return all_processed
 
 
 def expire_old_articles(articles):
-    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=MAX_RETENTION_HOURS)
-    valid = []
-    for a in articles:
-        try:
-            pub = datetime.datetime.fromisoformat(a["published"].replace("Z", "+00:00"))
-            if pub > cutoff:
-                valid.append(a)
-        except Exception:
-            valid.append(a)
-    return valid
+    cutoff_ts = int((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=MAX_RETENTION_HOURS)).timestamp())
+    return [a for a in articles if a.get("_ts", 0) > cutoff_ts]
 
 
-# --- Gemeinsames CSS ---
+# --- Gemeinsame UI-Komponenten (CSS, Modals, Core-JS) ---
 SHARED_CSS = """
     :root {
       --bg: #121418;
@@ -537,8 +556,172 @@ SHARED_CSS = """
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background-color: var(--bg);
       color: var(--text);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
       transition: background-color 0.2s ease, color 0.2s ease;
     }
+
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(2px);
+      z-index: 1100;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-card {
+      background: var(--sidebar-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      width: 100%;
+      max-width: 480px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 16px 36px rgba(0,0,0,0.3);
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+    }
+    .modal-header h2 { font-size: 1.15rem; color: var(--text-bold); }
+    .modal-body { overflow-y: auto; flex-grow: 1; font-size: 0.88rem; }
+    .modal-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      gap: 12px;
+    }
+    .modal-close-btn {
+      width: 100%;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 12px;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 16px;
+    }
+
+    .sidebar-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(2px);
+      z-index: 90;
+    }
+
+    .sidebar {
+      width: 290px;
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      z-index: 100;
+      transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .sidebar.collapsed { width: 0px; border-right: none; }
+    .sidebar-header {
+      padding: 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      min-width: 290px;
+    }
+    .sidebar-header h1 { font-size: 1.15rem; font-weight: 700; color: var(--text-bold); }
+    .close-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.4rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      line-height: 1;
+    }
+    .close-btn:hover { color: var(--text); }
+    .source-list { list-style: none; padding: 12px; overflow-y: auto; flex-grow: 1; min-width: 290px; }
+    .source-btn {
+      width: 100%;
+      text-align: left;
+      padding: 10px 14px;
+      margin-bottom: 4px;
+      border-radius: 6px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: all 0.15s ease;
+    }
+    .source-btn:hover, .source-btn.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .badge {
+      background: var(--border);
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.7rem;
+      color: var(--text);
+    }
+    .source-btn.active .badge { background: var(--accent); color: #fff; }
+
+    .sidebar-footer { padding: 16px; border-top: 1px solid var(--border); min-width: 290px; }
+    .archive-link-btn {
+      display: block;
+      text-align: center;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 8px;
+      border-radius: 6px;
+      background: var(--accent-dim);
+    }
+
+    .main {
+      flex-grow: 1;
+      overflow-y: auto;
+      padding: 28px 40px;
+      max-width: 100%;
+      transition: padding 0.2s ease;
+    }
+
+    .stream-header {
+      margin-bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 16px;
+    }
+    .header-left { display: flex; align-items: center; gap: 12px; }
+    .header-right { display: flex; align-items: center; gap: 8px; }
+    .stream-header h2 { font-size: 1.4rem; font-weight: 700; color: var(--text-bold); }
 
     .theme-toggle, .menu-toggle {
       background: var(--card-bg);
@@ -556,6 +739,26 @@ SHARED_CSS = """
     .theme-toggle:hover, .menu-toggle:hover {
       background: var(--card-hover);
       border-color: var(--text-muted);
+    }
+
+    .search-input {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      outline: none;
+      width: 240px;
+      transition: border-color 0.2s;
+    }
+    .search-input:focus { border-color: var(--accent); }
+
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 18px;
+      align-items: stretch;
     }
 
     .feed-card {
@@ -620,313 +823,6 @@ SHARED_CSS = """
       margin-top: auto;
       background: var(--border);
     }
-"""
-
-
-def render_html_dashboard(feed_health=None, feeds=None):
-    now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y, %H:%M Uhr")
-    health_text = ""
-    health_json = "[]"
-    if feed_health:
-        total_feeds = len(feed_health)
-        ok_feeds = sum(1 for h in feed_health if h["status"] == "ok" or h["code"] == 304 or h["code"] == 200)
-        failed = [h for h in feed_health if not (h["status"] == "ok" or h["code"] == 304 or h["code"] == 200)]
-        health_json = json.dumps(feed_health, ensure_ascii=False)
-        if ok_feeds == total_feeds:
-            health_text = f'<span style="cursor:pointer;" onclick="openHealthModal()" title="Klicken für Feed-Details">🟢 {ok_feeds}/{total_feeds} Feeds online</span>'
-        else:
-            failed_names = ", ".join(f["title"] for f in failed[:2])
-            health_text = f'<span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: {failed_names}">🟡 {ok_feeds}/{total_feeds} Feeds ({len(failed)} gestört) ℹ️</span>'
-
-    all_source_names = [f["title"] for f in (feeds or [])]
-    all_sources_json = json.dumps(all_source_names, ensure_ascii=False)
-
-    template = """<!DOCTYPE html>
-<html lang="de" data-theme="dark">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>News-Hub</title>
-
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="theme-color" content="#121418">
-
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
-
-  <style>
-    __SHARED_CSS__
-
-    body {
-      display: flex;
-      height: 100vh;
-      overflow: hidden;
-    }
-
-    #auth-overlay {
-      position: fixed;
-      inset: 0;
-      background: var(--bg);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
-    }
-    .auth-card {
-      background: var(--sidebar-bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 32px 28px;
-      width: 100%;
-      max-width: 380px;
-      text-align: center;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-    }
-    .auth-card h2 { font-size: 1.3rem; margin-bottom: 8px; color: var(--text-bold); }
-    .auth-card p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 20px; }
-    .auth-input {
-      width: 100%;
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 12px 14px;
-      border-radius: 6px;
-      font-size: 0.95rem;
-      margin-bottom: 14px;
-      outline: none;
-    }
-    .auth-input:focus { border-color: var(--accent); }
-    .auth-btn {
-      width: 100%;
-      background: var(--accent);
-      color: #fff;
-      border: none;
-      padding: 12px;
-      border-radius: 6px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .auth-error { color: #ef4444; font-size: 0.8rem; margin-top: 10px; display: none; }
-
-    /* Modals */
-    .modal-overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.75);
-      backdrop-filter: blur(2px);
-      z-index: 1100;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-    }
-    .modal-card {
-      background: var(--sidebar-bg);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 24px;
-      width: 100%;
-      max-width: 480px;
-      max-height: 80vh;
-      display: flex;
-      flex-direction: column;
-      box-shadow: 0 16px 36px rgba(0,0,0,0.3);
-    }
-    .modal-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 16px;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 10px;
-    }
-    .modal-header h2 { font-size: 1.15rem; color: var(--text-bold); }
-    .modal-body {
-      overflow-y: auto;
-      flex-grow: 1;
-      font-size: 0.88rem;
-    }
-    .modal-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 10px 0;
-      border-bottom: 1px solid var(--border);
-      gap: 12px;
-    }
-
-    .sidebar-backdrop {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.65);
-      backdrop-filter: blur(2px);
-      z-index: 90;
-    }
-
-    /* Sidebar */
-    .sidebar {
-      width: 290px;
-      background: var(--sidebar-bg);
-      border-right: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      flex-shrink: 0;
-      z-index: 100;
-      transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      overflow: hidden;
-      white-space: nowrap;
-    }
-    
-    .sidebar.collapsed {
-      width: 0px;
-      border-right: none;
-    }
-
-    .sidebar-header {
-      padding: 20px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      min-width: 290px;
-    }
-    .sidebar-header h1 { font-size: 1.15rem; font-weight: 700; color: var(--text-bold); }
-    .close-btn {
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      font-size: 1.4rem;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      line-height: 1;
-    }
-    .close-btn:hover { color: var(--text); }
-    .source-list { list-style: none; padding: 12px; overflow-y: auto; flex-grow: 1; min-width: 290px; }
-    .source-btn {
-      width: 100%;
-      text-align: left;
-      padding: 10px 14px;
-      margin-bottom: 4px;
-      border-radius: 6px;
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      font-size: 0.85rem;
-      font-weight: 500;
-      cursor: pointer;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      transition: all 0.15s ease;
-    }
-    .source-btn:hover, .source-btn.active {
-      background: var(--accent-dim);
-      color: var(--accent);
-      font-weight: 600;
-    }
-    .badge {
-      background: var(--border);
-      padding: 2px 8px;
-      border-radius: 12px;
-      font-size: 0.7rem;
-      color: var(--text);
-    }
-    .source-btn.active .badge { background: var(--accent); color: #fff; }
-
-    .sidebar-footer {
-      padding: 16px;
-      border-top: 1px solid var(--border);
-      min-width: 290px;
-    }
-    .archive-link-btn {
-      display: block;
-      text-align: center;
-      color: var(--accent);
-      text-decoration: none;
-      font-size: 0.82rem;
-      font-weight: 600;
-      margin-bottom: 10px;
-      padding: 6px;
-      border-radius: 4px;
-      background: var(--accent-dim);
-    }
-    .mark-all-btn {
-      width: 100%;
-      background: var(--border);
-      color: var(--text);
-      border: none;
-      padding: 8px 12px;
-      border-radius: 6px;
-      font-size: 0.8rem;
-      font-weight: 500;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      margin-bottom: 8px;
-    }
-    .mark-all-btn:hover { opacity: 0.9; }
-    .shortcuts-hint {
-      font-size: 0.7rem;
-      color: var(--text-muted);
-      text-align: center;
-      margin-top: 6px;
-    }
-
-    .main {
-      flex-grow: 1;
-      overflow-y: auto;
-      padding: 28px 40px;
-      max-width: 100%;
-      transition: padding 0.2s ease;
-    }
-
-    .stream-header {
-      margin-bottom: 24px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 16px;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 16px;
-    }
-    .header-left {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .header-right {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .stream-header h2 { font-size: 1.4rem; font-weight: 700; color: var(--text-bold); }
-
-    .search-input {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 8px 14px;
-      border-radius: 6px;
-      font-size: 0.85rem;
-      outline: none;
-      width: 240px;
-      transition: border-color 0.2s;
-    }
-    .search-input:focus { border-color: var(--accent); }
-
-    #articles-container {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-      gap: 18px;
-      align-items: stretch;
-    }
 
     @media (max-width: 768px) {
       .sidebar {
@@ -939,37 +835,18 @@ def render_html_dashboard(feed_health=None, feeds=None):
       .sidebar.open { transform: translateX(0); }
       .sidebar.collapsed { width: 290px; }
       .sidebar-backdrop.open { display: block; }
-
       .main { padding: 14px 12px; }
-      .stream-header {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 12px;
-      }
+      .stream-header { flex-direction: column; align-items: stretch; gap: 12px; }
       .header-right { width: 100%; }
       .search-input { flex-grow: 1; width: auto; }
-      #articles-container {
-        grid-template-columns: 1fr;
-        gap: 12px;
-      }
+      .cards-grid { grid-template-columns: 1fr; gap: 12px; }
       .feed-card { padding: 14px; }
       .feed-thumb { height: 150px; }
       .shortcuts-hint { display: none; }
     }
-  </style>
-</head>
-<body>
+"""
 
-  <div id="auth-overlay">
-    <div class="auth-card">
-      <h2>🔐 Geschützter Feed Hub</h2>
-      <p>Gib dein Passwort ein, um die verschlüsselten Artikel zu laden.</p>
-      <input type="password" id="auth-password" class="auth-input" placeholder="Passwort eingeben..." onkeydown="if(event.key==='Enter') submitAuth()">
-      <button class="auth-btn" onclick="submitAuth()">Entschlüsseln</button>
-      <div id="auth-error" class="auth-error">Ungültiges Passwort!</div>
-    </div>
-  </div>
-
+SHARED_MODALS = """
   <!-- Feed Health Modal -->
   <div id="health-modal" class="modal-overlay">
     <div class="modal-card">
@@ -978,7 +855,7 @@ def render_html_dashboard(feed_health=None, feeds=None):
         <button class="close-btn" onclick="closeHealthModal()">&times;</button>
       </div>
       <div id="health-list" class="modal-body"></div>
-      <button class="auth-btn" style="margin-top:16px;" onclick="closeHealthModal()">Schließen</button>
+      <button class="modal-close-btn" onclick="closeHealthModal()">Schließen</button>
     </div>
   </div>
 
@@ -993,313 +870,12 @@ def render_html_dashboard(feed_health=None, feeds=None):
         Übersicht der Quellen, deren Doppelberichte gebündelt wurden:
       </p>
       <div id="duplicate-list" class="modal-body"></div>
-      <button class="auth-btn" style="margin-top:16px;" onclick="closeDuplicateModal()">Schließen</button>
+      <button class="modal-close-btn" onclick="closeDuplicateModal()">Schließen</button>
     </div>
   </div>
+"""
 
-  <div class="sidebar-backdrop" id="backdrop" onclick="toggleSidebar()"></div>
-
-  <aside class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-      <div>
-        <h1>⚡ News-Hub</h1>
-        <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
-          Stand: __NOW_STR__<br>
-          <span style="color: var(--accent); cursor: pointer;" id="sidebar-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
-          __HEALTH_BLOCK__
-        </p>
-      </div>
-      <button class="close-btn" onclick="toggleSidebar()">&times;</button>
-    </div>
-    <ul class="source-list" id="source-list">
-      <li>
-        <button class="source-btn active" onclick="filterSource('all', this)">
-          <span>Alle Meldungen</span>
-          <span class="badge" id="total-badge">0</span>
-        </button>
-      </li>
-    </ul>
-    <div class="sidebar-footer">
-      <a href="archive.html" class="archive-link-btn">📑 Zum 24h-Archiv</a>
-      <button class="mark-all-btn" onclick="markAllAsRead()">✓ Alle als gelesen markieren</button>
-      <div class="shortcuts-hint">Tasten: <strong>J/K</strong> Nav • <strong>O</strong> Öffnen • <strong>M</strong> Gelesen • <strong>[</strong> Menü</div>
-    </div>
-  </aside>
-
-  <main class="main">
-    <div class="stream-header">
-      <div class="header-left">
-        <button class="menu-toggle" onclick="toggleSidebar()" title="Menü ein-/ausblenden (Taste: [)">☰</button>
-        <div>
-          <h2 id="current-title">Alle Meldungen</h2>
-        </div>
-      </div>
-      <div class="header-right">
-        <input type="search" class="search-input" id="search-box" placeholder="Artikel durchsuchen..." oninput="filterSearch(this.value)">
-        <button class="menu-toggle" id="refresh-btn" onclick="triggerWorkflow()" title="News sofort via GitHub Action aktualisieren">🔄</button>
-        <button class="theme-toggle" id="theme-btn" onclick="toggleTheme()" title="Dark/Light Mode umschalten">🌓</button>
-      </div>
-    </div>
-
-    <div id="articles-container"></div>
-  </main>
-
-  <script>
-    let rawEncryptedData = "";
-    let globalArticles = [];
-    let allSourceCounts = {};
-    const configuredSources = __CONFIGURED_SOURCES__;
-    const feedHealthData = __HEALTH_DATA__;
-
-    // --- GitHub Action Dispatch per Browser-Button ---
-    async function triggerWorkflow() {
-      const btn = document.getElementById('refresh-btn');
-      let token = localStorage.getItem('gh_dispatch_token');
-
-      if (!token) {
-        token = prompt("Bitte gib deinen GitHub Personal Access Token ein (wird nur lokal auf diesem Gerät gespeichert):");
-        if (!token) return;
-        localStorage.setItem('gh_dispatch_token', token.trim());
-      }
-
-      btn.style.opacity = '0.5';
-      btn.style.pointerEvents = 'none';
-      btn.textContent = '⏳';
-
-      const repoOwner = 'schoerb';
-      const repoName = 'news-hub';
-      const workflowFileName = 'deploy.yml';
-
-      try {
-        const response = await fetch(`https://api.github.com/repos/${repoOwner}/${repoName}/actions/workflows/${workflowFileName}/dispatches`, {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/vnd.github+json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({ ref: 'main' })
-        });
-
-        if (response.status === 204) {
-          alert('🚀 GitHub Action gestartet! Neue Artikel sind in ca. 1-2 Minuten bereit.');
-        } else if (response.status === 401 || response.status === 403) {
-          localStorage.removeItem('gh_dispatch_token');
-          alert('❌ Token ungültig oder abgelaufen. Bitte erneut versuchen.');
-        } else {
-          alert(`⚠️ GitHub API meldet Status: ${response.status}`);
-        }
-      } catch (err) {
-        alert('Fehler beim Verbinden zur GitHub API: ' + err.message);
-      } finally {
-        btn.style.opacity = '1';
-        btn.style.pointerEvents = 'auto';
-        btn.textContent = '🔄';
-      }
-    }
-
-    // --- Feed Health Modal ---
-    function openHealthModal() {
-      const listEl = document.getElementById('health-list');
-      if (!feedHealthData || !feedHealthData.length) {
-        listEl.innerHTML = '<p style="color:var(--text-muted); padding:12px 0;">Keine Diagnosedaten vorhanden.</p>';
-      } else {
-        listEl.innerHTML = feedHealthData.map(f => {
-          const isOk = f.status === 'ok' || f.code === 304 || f.code === 200;
-          const icon = isOk ? '🟢' : '🔴';
-          const info = (f.code === 304) ? 'HTTP 304 (Cache unverändert)' : (isOk ? `HTTP ${f.code}` : `Fehler: ${f.status} (${f.code})`);
-          const color = isOk ? 'var(--text-muted)' : '#ef4444';
-          return `
-            <div class="modal-row">
-              <span style="font-weight:500; color:var(--text);">${icon} ${escapeHtml(f.title)}</span>
-              <span style="color:${color}; font-size:0.8rem; font-family:monospace;">${escapeHtml(info)}</span>
-            </div>
-          `;
-        }).join('');
-      }
-      document.getElementById('health-modal').style.display = 'flex';
-    }
-
-    function closeHealthModal() {
-      document.getElementById('health-modal').style.display = 'none';
-    }
-
-    // --- Duplicate Stats Modal ---
-    function openDuplicateModal() {
-      const listEl = document.getElementById('duplicate-list');
-      const dupCounts = {};
-      let totalDups = 0;
-
-      globalArticles.forEach(a => {
-        (a.other_sources || []).forEach(src => {
-          dupCounts[src] = (dupCounts[src] || 0) + 1;
-          totalDups++;
-        });
-      });
-
-      const sortedDups = Object.entries(dupCounts).sort((a, b) => b[1] - a[1]);
-
-      if (!sortedDups.length) {
-        listEl.innerHTML = '<p style="color:var(--text-muted); padding:12px 0;">Keine zusammengeführten Duplikate im aktuellen Datenbestand.</p>';
-      } else {
-        listEl.innerHTML = `
-          <div style="margin-bottom:12px; font-weight:600; color:var(--accent);">
-            Gesamt: ${totalDups} entfernte Doppelberichte
-          </div>
-        ` + sortedDups.map(([src, count]) => `
-          <div class="modal-row">
-            <span style="font-weight:500; color:var(--text);">${escapeHtml(src)}</span>
-            <span class="badge" style="background:var(--accent-dim); color:var(--accent); font-weight:600;">${count} Dubletten</span>
-          </div>
-        `).join('');
-      }
-
-      document.getElementById('duplicate-modal').style.display = 'flex';
-    }
-
-    function closeDuplicateModal() {
-      document.getElementById('duplicate-modal').style.display = 'none';
-    }
-
-    // --- Theme Management ---
-    function initTheme() {
-      const savedTheme = localStorage.getItem('hub_theme');
-      if (savedTheme) {
-        document.documentElement.setAttribute('data-theme', savedTheme);
-      } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
-        document.documentElement.setAttribute('data-theme', 'light');
-      }
-    }
-
-    function toggleTheme() {
-      const current = document.documentElement.getAttribute('data-theme') || 'dark';
-      const target = current === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', target);
-      localStorage.setItem('hub_theme', target);
-    }
-
-    async function initAuth() {
-      initTheme();
-      try {
-        const r = await fetch('data.json');
-        rawEncryptedData = await r.text();
-      } catch (e) {
-        document.getElementById('auth-error').textContent = 'Fehler beim Laden von data.json';
-        document.getElementById('auth-error').style.display = 'block';
-        return;
-      }
-
-      const savedPw = localStorage.getItem('hub_key');
-      if (savedPw) {
-        if (tryDecrypt(savedPw)) return;
-      }
-      document.getElementById('auth-overlay').style.display = 'flex';
-      document.getElementById('auth-password').focus();
-    }
-
-    function submitAuth() {
-      const pw = document.getElementById('auth-password').value;
-      if (tryDecrypt(pw)) {
-        localStorage.setItem('hub_key', pw);
-      } else {
-        document.getElementById('auth-error').style.display = 'block';
-      }
-    }
-
-    function tryDecrypt(password) {
-      try {
-        if (rawEncryptedData.trim().startsWith('[')) {
-          globalArticles = JSON.parse(rawEncryptedData);
-          onDataLoaded();
-          return true;
-        }
-
-        const decrypted = CryptoJS.AES.decrypt(rawEncryptedData, password).toString(CryptoJS.enc.Utf8);
-        if (!decrypted || !decrypted.startsWith('[')) return false;
-
-        globalArticles = JSON.parse(decrypted);
-        onDataLoaded();
-        return true;
-      } catch (e) {
-        return false;
-      }
-    }
-
-    function onDataLoaded() {
-      document.getElementById('auth-overlay').style.display = 'none';
-      renderUI(globalArticles);
-      initReadState();
-      updateRelativeTimes();
-      initSidebarState();
-    }
-
-    function renderUI(articles) {
-      const container = document.getElementById('articles-container');
-      const sourceList = document.getElementById('source-list');
-      const totalBadge = document.getElementById('total-badge');
-
-      totalBadge.textContent = articles.length;
-
-      let totalDups = 0;
-      allSourceCounts = {};
-      
-      articles.forEach(a => {
-        totalDups += (a.other_sources || []).length;
-        const s = a.source || "Unbekannt";
-        allSourceCounts[s] = (allSourceCounts[s] || 0) + 1;
-      });
-
-      document.getElementById('current-title').textContent = `Alle Meldungen (${articles.length})`;
-
-      const sidebarDupInfo = document.getElementById('sidebar-dup-info');
-      if (sidebarDupInfo) {
-        sidebarDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
-      }
-
-      const knownSources = new Set([...configuredSources, ...Object.keys(allSourceCounts)]);
-      const sortedSources = Array.from(knownSources).sort((a, b) => {
-        const countA = allSourceCounts[a] || 0;
-        const countB = allSourceCounts[b] || 0;
-        if (countB !== countA) return countB - countA;
-        return a.localeCompare(b);
-      });
-
-      sortedSources.forEach(sourceName => {
-        const count = allSourceCounts[sourceName] || 0;
-        const li = document.createElement('li');
-        li.innerHTML = `
-          <button class="source-btn" onclick="filterSource('${escapeHtml(sourceName)}', this)">
-            <span>${escapeHtml(sourceName)}</span>
-            <span class="badge">${count}</span>
-          </button>`;
-        sourceList.appendChild(li);
-      });
-
-      let htmlCards = "";
-      articles.forEach(a => {
-        const linkHash = Math.abs(hashString(a.link));
-        const others = (a.other_sources && a.other_sources.length) 
-          ? `<span class="feed-others">• Auch bei: ${escapeHtml(a.other_sources.join(", "))}</span>` : "";
-        const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" alt="Thumbnail" onerror="this.remove()" />` : "";
-
-        const linkedSources = [a.source, ...(a.other_sources || [])].join(";;;");
-
-        htmlCards += `
-          <article class="feed-card" data-id="${linkHash}" data-sources="${escapeHtml(linkedSources)}">
-            <div class="feed-content">
-              <div class="feed-meta">
-                <span class="feed-source">${escapeHtml(a.source)}</span>
-                <span class="feed-time" data-pub="${a.published || ''}"></span>
-                ${others}
-              </div>
-              <a class="feed-title" href="${escapeHtml(a.link)}" target="_blank" rel="noopener" onclick="markAsRead('${linkHash}')">${escapeHtml(a.title)}</a>
-              <p class="feed-summary">${a.summary}</p>
-            </div>
-            ${img}
-          </article>`;
-      });
-      container.innerHTML = htmlCards;
-    }
-
+SHARED_JS = """
     function escapeHtml(s) {
       return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
@@ -1325,6 +901,383 @@ def render_html_dashboard(feed_health=None, feeds=None):
         if (h < 24) return `• vor ${h}h`;
         return `• vor ${Math.floor(h / 24)}d`;
       } catch(e) { return ''; }
+    }
+
+    function initTheme() {
+      const savedTheme = localStorage.getItem('hub_theme');
+      if (savedTheme) {
+        document.documentElement.setAttribute('data-theme', savedTheme);
+      } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    }
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const target = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', target);
+      localStorage.setItem('hub_theme', target);
+    }
+
+    function initSidebarState() {
+      if (window.innerWidth > 768) {
+        const isClosed = localStorage.getItem('sidebar_closed') === 'true';
+        if (isClosed) document.getElementById('sidebar').classList.add('collapsed');
+      }
+    }
+
+    function toggleSidebar() {
+      const sidebar = document.getElementById('sidebar');
+      const backdrop = document.getElementById('backdrop');
+      if (window.innerWidth <= 768) {
+        sidebar.classList.toggle('open');
+        backdrop.classList.toggle('open');
+      } else {
+        sidebar.classList.toggle('collapsed');
+        localStorage.setItem('sidebar_closed', sidebar.classList.contains('collapsed'));
+      }
+    }
+
+    function openHealthModal() {
+      const listEl = document.getElementById('health-list');
+      if (!feedHealthData || !feedHealthData.length) {
+        listEl.innerHTML = '<p style="color:var(--text-muted); padding:12px 0;">Keine Diagnosedaten vorhanden.</p>';
+      } else {
+        listEl.innerHTML = feedHealthData.map(f => {
+          const isOk = f.status === 'ok' || f.code === 304 || f.code === 200;
+          const icon = isOk ? '🟢' : '🔴';
+          const info = (f.code === 304) ? 'HTTP 304 (Cache unverändert)' : (isOk ? `HTTP ${f.code}` : `Fehler: ${f.status} (${f.code})`);
+          const color = isOk ? 'var(--text-muted)' : '#ef4444';
+          return `
+            <div class="modal-row">
+              <span style="font-weight:500; color:var(--text);">${icon} ${escapeHtml(f.title)}</span>
+              <span style="color:${color}; font-size:0.8rem; font-family:monospace;">${escapeHtml(info)}</span>
+            </div>
+          `;
+        }).join('');
+      }
+      document.getElementById('health-modal').style.display = 'flex';
+    }
+
+    function closeHealthModal() {
+      document.getElementById('health-modal').style.display = 'none';
+    }
+
+    function openDuplicateModal() {
+      const listEl = document.getElementById('duplicate-list');
+      const dupCounts = {};
+      let totalDups = 0;
+
+      activeArticlesCollection.forEach(a => {
+        (a.other_sources || []).forEach(src => {
+          dupCounts[src] = (dupCounts[src] || 0) + 1;
+          totalDups++;
+        });
+      });
+
+      const sortedDups = Object.entries(dupCounts).sort((a, b) => b[1] - a[1]);
+      if (!sortedDups.length) {
+        listEl.innerHTML = '<p style="color:var(--text-muted); padding:12px 0;">Keine zusammengeführten Duplikate im aktuellen Datenbestand.</p>';
+      } else {
+        listEl.innerHTML = `
+          <div style="margin-bottom:12px; font-weight:600; color:var(--accent);">
+            Gesamt: ${totalDups} entfernte Doppelberichte
+          </div>
+        ` + sortedDups.map(([src, count]) => `
+          <div class="modal-row">
+            <span style="font-weight:500; color:var(--text);">${escapeHtml(src)}</span>
+            <span class="badge" style="background:var(--accent-dim); color:var(--accent); font-weight:600;">${count} Dubletten</span>
+          </div>
+        `).join('');
+      }
+      document.getElementById('duplicate-modal').style.display = 'flex';
+    }
+
+    function closeDuplicateModal() {
+      document.getElementById('duplicate-modal').style.display = 'none';
+    }
+"""
+
+
+def render_html_dashboard(feed_health=None, feeds=None):
+    now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y, %H:%M Uhr")
+    health_text = ""
+    health_json = "[]"
+    if feed_health:
+        total_feeds = len(feed_health)
+        ok_feeds = sum(1 for h in feed_health if h["status"] == "ok" or h["code"] in (200, 304))
+        failed = [h for h in feed_health if not (h["status"] == "ok" or h["code"] in (200, 304))]
+        health_json = json.dumps(feed_health, ensure_ascii=False)
+        if ok_feeds == total_feeds:
+            health_text = f'<span style="cursor:pointer;" onclick="openHealthModal()" title="Klicken für Feed-Details">🟢 {ok_feeds}/{total_feeds} Feeds online</span>'
+        else:
+            failed_names = ", ".join(f["title"] for f in failed[:2])
+            health_text = f'<span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: {failed_names}">🟡 {ok_feeds}/{total_feeds} Feeds ({len(failed)} gestört) ℹ️</span>'
+
+    all_source_names = [f["title"] for f in (feeds or [])]
+    all_sources_json = json.dumps(all_source_names, ensure_ascii=False)
+
+    template = """<!DOCTYPE html>
+<html lang="de" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>News-Hub</title>
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#121418">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+  <style>
+    __SHARED_CSS__
+    #auth-overlay {
+      position: fixed; inset: 0; background: var(--bg);
+      display: flex; align-items: center; justify-content: center; z-index: 1000;
+    }
+    .auth-card {
+      background: var(--sidebar-bg); border: 1px solid var(--border);
+      border-radius: 12px; padding: 32px 28px; width: 100%; max-width: 380px;
+      text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+    }
+    .auth-card h2 { font-size: 1.3rem; margin-bottom: 8px; color: var(--text-bold); }
+    .auth-card p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 20px; }
+    .auth-input {
+      width: 100%; background: var(--card-bg); border: 1px solid var(--border);
+      color: var(--text); padding: 12px 14px; border-radius: 6px; font-size: 0.95rem;
+      margin-bottom: 14px; outline: none;
+    }
+    .auth-input:focus { border-color: var(--accent); }
+    .auth-btn {
+      width: 100%; background: var(--accent); color: #fff; border: none;
+      padding: 12px; border-radius: 6px; font-weight: 600; cursor: pointer;
+    }
+    .auth-error { color: #ef4444; font-size: 0.8rem; margin-top: 10px; display: none; }
+    .mark-all-btn {
+      width: 100%; background: var(--border); color: var(--text); border: none;
+      padding: 8px 12px; border-radius: 6px; font-size: 0.8rem; font-weight: 500;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      gap: 6px; margin-bottom: 8px;
+    }
+    .mark-all-btn:hover { opacity: 0.9; }
+    .shortcuts-hint { font-size: 0.7rem; color: var(--text-muted); text-align: center; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div id="auth-overlay">
+    <div class="auth-card">
+      <h2>🔐 Geschützter Feed Hub</h2>
+      <p>Gib dein Passwort ein, um die verschlüsselten Artikel zu laden.</p>
+      <input type="password" id="auth-password" class="auth-input" placeholder="Passwort eingeben..." onkeydown="if(event.key==='Enter') submitAuth()">
+      <button class="auth-btn" onclick="submitAuth()">Entschlüsseln</button>
+      <div id="auth-error" class="auth-error">Ungültiges Passwort!</div>
+    </div>
+  </div>
+
+  __SHARED_MODALS__
+
+  <div class="sidebar-backdrop" id="backdrop" onclick="toggleSidebar()"></div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div>
+        <h1>⚡ News-Hub</h1>
+        <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
+          Stand: __NOW_STR__<br>
+          <span style="color: var(--accent); cursor: pointer;" id="sidebar-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
+          __HEALTH_BLOCK__
+        </p>
+      </div>
+      <button class="close-btn" onclick="toggleSidebar()">&times;</button>
+    </div>
+    <ul class="source-list" id="source-list">
+      <li>
+        <button class="source-btn active" onclick="filterSource('all', this)">
+          <span>Alle Meldungen</span>
+          <span class="badge" id="total-badge">0</span>
+        </button>
+      </li>
+    </ul>
+    <div class="sidebar-footer">
+      <a href="archive.html" class="archive-link-btn" style="margin-bottom:8px;">📑 Zum 24h-Archiv</a>
+      <button class="mark-all-btn" onclick="markAllAsRead()">✓ Alle als gelesen markieren</button>
+      <div class="shortcuts-hint">Tasten: <strong>J/K</strong> Nav • <strong>O</strong> Öffnen • <strong>M</strong> Gelesen • <strong>[</strong> Menü</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="stream-header">
+      <div class="header-left">
+        <button class="menu-toggle" onclick="toggleSidebar()" title="Menü ein-/ausblenden (Taste: [)">☰</button>
+        <h2 id="current-title">Alle Meldungen</h2>
+      </div>
+      <div class="header-right">
+        <input type="search" class="search-input" id="search-box" placeholder="Artikel durchsuchen..." oninput="filterSearch(this.value)">
+        <button class="menu-toggle" id="refresh-btn" onclick="triggerWorkflow()" title="News sofort via GitHub Action aktualisieren">🔄</button>
+        <button class="theme-toggle" id="theme-btn" onclick="toggleTheme()" title="Dark/Light Mode umschalten">🌓</button>
+      </div>
+    </div>
+    <div id="articles-container" class="cards-grid"></div>
+  </main>
+
+  <script>
+    let rawEncryptedData = "";
+    let globalArticles = [];
+    let activeArticlesCollection = [];
+    let allSourceCounts = {};
+    const configuredSources = __CONFIGURED_SOURCES__;
+    const feedHealthData = __HEALTH_DATA__;
+
+    __SHARED_JS__
+
+    async function triggerWorkflow() {
+      const btn = document.getElementById('refresh-btn');
+      let token = localStorage.getItem('gh_dispatch_token');
+
+      if (!token) {
+        token = prompt("Bitte gib deinen GitHub Personal Access Token ein (wird nur lokal auf diesem Gerät gespeichert):");
+        if (!token) return;
+        localStorage.setItem('gh_dispatch_token', token.trim());
+      }
+
+      btn.style.opacity = '0.5';
+      btn.style.pointerEvents = 'none';
+      btn.textContent = '⏳';
+
+      try {
+        const res = await fetch('https://api.github.com/repos/schoerb/news-hub/actions/workflows/deploy.yml/dispatches', {
+          method: 'POST',
+          headers: { 'Accept': 'application/vnd.github+json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ ref: 'main' })
+        });
+        if (res.status === 204) {
+          alert('🚀 GitHub Action gestartet! Neue Artikel sind in ca. 1-2 Minuten bereit.');
+        } else if (res.status === 401 || res.status === 403) {
+          localStorage.removeItem('gh_dispatch_token');
+          alert('❌ Token ungültig oder abgelaufen.');
+        } else {
+          alert(`⚠️ GitHub API meldet Status: ${res.status}`);
+        }
+      } catch (err) {
+        alert('Fehler beim Verbinden zur GitHub API: ' + err.message);
+      } finally {
+        btn.style.opacity = '1';
+        btn.style.pointerEvents = 'auto';
+        btn.textContent = '🔄';
+      }
+    }
+
+    async function initAuth() {
+      initTheme();
+      try {
+        const r = await fetch('data.json');
+        rawEncryptedData = await r.text();
+      } catch (e) {
+        document.getElementById('auth-error').textContent = 'Fehler beim Laden von data.json';
+        document.getElementById('auth-error').style.display = 'block';
+        return;
+      }
+
+      const savedPw = localStorage.getItem('hub_key');
+      if (savedPw && tryDecrypt(savedPw)) return;
+
+      document.getElementById('auth-overlay').style.display = 'flex';
+      document.getElementById('auth-password').focus();
+    }
+
+    function submitAuth() {
+      const pw = document.getElementById('auth-password').value;
+      if (tryDecrypt(pw)) {
+        localStorage.setItem('hub_key', pw);
+      } else {
+        document.getElementById('auth-error').style.display = 'block';
+      }
+    }
+
+    function tryDecrypt(password) {
+      try {
+        if (rawEncryptedData.trim().startsWith('[')) {
+          globalArticles = JSON.parse(rawEncryptedData);
+          onDataLoaded();
+          return true;
+        }
+        const decrypted = CryptoJS.AES.decrypt(rawEncryptedData, password).toString(CryptoJS.enc.Utf8);
+        if (!decrypted || !decrypted.startsWith('[')) return false;
+        globalArticles = JSON.parse(decrypted);
+        onDataLoaded();
+        return true;
+      } catch (e) { return false; }
+    }
+
+    function onDataLoaded() {
+      document.getElementById('auth-overlay').style.display = 'none';
+      activeArticlesCollection = globalArticles;
+      renderUI(globalArticles);
+      initReadState();
+      updateRelativeTimes();
+      initSidebarState();
+    }
+
+    function renderUI(articles) {
+      const container = document.getElementById('articles-container');
+      const sourceList = document.getElementById('source-list');
+      const totalBadge = document.getElementById('total-badge');
+      totalBadge.textContent = articles.length;
+
+      let totalDups = 0;
+      allSourceCounts = {};
+      articles.forEach(a => {
+        totalDups += (a.other_sources || []).length;
+        const s = a.source || "Unbekannt";
+        allSourceCounts[s] = (allSourceCounts[s] || 0) + 1;
+      });
+
+      document.getElementById('current-title').textContent = `Alle Meldungen (${articles.length})`;
+      const sidebarDupInfo = document.getElementById('sidebar-dup-info');
+      if (sidebarDupInfo) sidebarDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
+
+      const knownSources = new Set([...configuredSources, ...Object.keys(allSourceCounts)]);
+      const sortedSources = Array.from(knownSources).sort((a, b) => {
+        const countA = allSourceCounts[a] || 0;
+        const countB = allSourceCounts[b] || 0;
+        return countB !== countA ? countB - countA : a.localeCompare(b);
+      });
+
+      sortedSources.forEach(sourceName => {
+        const count = allSourceCounts[sourceName] || 0;
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <button class="source-btn" onclick="filterSource('${escapeHtml(sourceName)}', this)">
+            <span>${escapeHtml(sourceName)}</span>
+            <span class="badge">${count}</span>
+          </button>`;
+        sourceList.appendChild(li);
+      });
+
+      let htmlCards = "";
+      articles.forEach(a => {
+        const linkHash = Math.abs(hashString(a.link));
+        const others = (a.other_sources && a.other_sources.length) 
+          ? `<span class="feed-others">• Auch bei: ${escapeHtml(a.other_sources.join(", "))}</span>` : "";
+        const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" alt="Thumbnail" onerror="this.remove()" />` : "";
+        const linkedSources = [a.source, ...(a.other_sources || [])].join(";;;");
+
+        htmlCards += `
+          <article class="feed-card" data-id="${linkHash}" data-sources="${escapeHtml(linkedSources)}">
+            <div class="feed-content">
+              <div class="feed-meta">
+                <span class="feed-source">${escapeHtml(a.source)}</span>
+                <span class="feed-time" data-pub="${a.published || ''}"></span>
+                ${others}
+              </div>
+              <a class="feed-title" href="${escapeHtml(a.link)}" target="_blank" rel="noopener" onclick="markAsRead('${linkHash}')">${escapeHtml(a.title)}</a>
+              <p class="feed-summary">${a.summary}</p>
+            </div>
+            ${img}
+          </article>`;
+      });
+      container.innerHTML = htmlCards;
     }
 
     function updateRelativeTimes() {
@@ -1385,12 +1338,9 @@ def render_html_dashboard(feed_health=None, feeds=None):
       document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
 
-      if (source === 'all') {
-        document.getElementById('current-title').textContent = `Alle Meldungen (${globalArticles.length})`;
-      } else {
-        const count = allSourceCounts[source] || 0;
-        document.getElementById('current-title').textContent = `${source} (${count})`;
-      }
+      document.getElementById('current-title').textContent = (source === 'all')
+        ? `Alle Meldungen (${globalArticles.length})`
+        : `${source} (${allSourceCounts[source] || 0})`;
 
       applyCombinedFilters();
       if (window.innerWidth <= 768) toggleSidebar();
@@ -1406,32 +1356,9 @@ def render_html_dashboard(feed_health=None, feeds=None):
       document.querySelectorAll('.feed-card').forEach(card => {
         const cardSources = (card.dataset.sources || "").split(";;;");
         const matchesSource = (activeSource === 'all' || cardSources.includes(activeSource));
-        const text = card.textContent.toLowerCase();
-        const matchesSearch = !searchQuery || text.includes(searchQuery);
+        const matchesSearch = !searchQuery || card.textContent.toLowerCase().includes(searchQuery);
         card.style.display = (matchesSource && matchesSearch) ? '' : 'none';
       });
-    }
-
-    function initSidebarState() {
-      if (window.innerWidth > 768) {
-        const isClosed = localStorage.getItem('sidebar_closed') === 'true';
-        if (isClosed) {
-          document.getElementById('sidebar').classList.add('collapsed');
-        }
-      }
-    }
-
-    function toggleSidebar() {
-      const sidebar = document.getElementById('sidebar');
-      const backdrop = document.getElementById('backdrop');
-
-      if (window.innerWidth <= 768) {
-        sidebar.classList.toggle('open');
-        backdrop.classList.toggle('open');
-      } else {
-        sidebar.classList.toggle('collapsed');
-        localStorage.setItem('sidebar_closed', sidebar.classList.contains('collapsed'));
-      }
     }
 
     let selectedIndex = -1;
@@ -1455,39 +1382,19 @@ def render_html_dashboard(feed_health=None, feeds=None):
         return;
       }
       const visible = getVisibleCards();
-
-      if (e.key === '[') {
-        e.preventDefault();
-        toggleSidebar();
-        return;
-      }
-
-      if (e.key === 'Escape') {
-        closeHealthModal();
-        closeDuplicateModal();
-      }
-
+      if (e.key === '[') { e.preventDefault(); toggleSidebar(); return; }
+      if (e.key === 'Escape') { closeHealthModal(); closeDuplicateModal(); }
       if (!visible.length) return;
 
-      if (e.key === 'j' || e.key === 'ArrowDown') {
-        e.preventDefault();
-        selectCard(selectedIndex + 1);
-      } else if (e.key === 'k' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        selectCard(selectedIndex - 1);
-      } else if (e.key === 'o' || e.key === 'Enter') {
+      if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); selectCard(selectedIndex + 1); }
+      else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); selectCard(selectedIndex - 1); }
+      else if (e.key === 'o' || e.key === 'Enter') {
         if (selectedIndex >= 0 && selectedIndex < visible.length) {
-          const card = visible[selectedIndex];
-          const link = card.querySelector('.feed-title');
-          if (link) {
-            markAsRead(card.dataset.id);
-            window.open(link.href, '_blank');
-          }
+          const link = visible[selectedIndex].querySelector('.feed-title');
+          if (link) { markAsRead(visible[selectedIndex].dataset.id); window.open(link.href, '_blank'); }
         }
       } else if (e.key === 'm') {
-        if (selectedIndex >= 0 && selectedIndex < visible.length) {
-          toggleRead(visible[selectedIndex].dataset.id);
-        }
+        if (selectedIndex >= 0 && selectedIndex < visible.length) toggleRead(visible[selectedIndex].dataset.id);
       } else if (e.key === '/') {
         e.preventDefault();
         document.getElementById('search-box').focus();
@@ -1501,145 +1408,112 @@ def render_html_dashboard(feed_health=None, feeds=None):
 """
     health_replacement = f"<br>{health_text}" if health_text else ""
     return template.replace("__SHARED_CSS__", SHARED_CSS)\
+                   .replace("__SHARED_MODALS__", SHARED_MODALS)\
+                   .replace("__SHARED_JS__", SHARED_JS)\
                    .replace("__NOW_STR__", now_str)\
                    .replace("__HEALTH_BLOCK__", health_replacement)\
                    .replace("__HEALTH_DATA__", health_json)\
                    .replace("__CONFIGURED_SOURCES__", all_sources_json)
 
 
-def render_archive_html():
+def render_archive_html(feed_health=None, feeds=None):
     now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y, %H:%M Uhr")
+    health_text = ""
+    health_json = "[]"
+    if feed_health:
+        total_feeds = len(feed_health)
+        ok_feeds = sum(1 for h in feed_health if h["status"] == "ok" or h["code"] in (200, 304))
+        failed = [h for h in feed_health if not (h["status"] == "ok" or h["code"] in (200, 304))]
+        health_json = json.dumps(feed_health, ensure_ascii=False)
+        if ok_feeds == total_feeds:
+            health_text = f'<span style="cursor:pointer;" onclick="openHealthModal()" title="Klicken für Feed-Details">🟢 {ok_feeds}/{total_feeds} Feeds online</span>'
+        else:
+            failed_names = ", ".join(f["title"] for f in failed[:2])
+            health_text = f'<span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: {failed_names}">🟡 {ok_feeds}/{total_feeds} Feeds ({len(failed)} gestört) ℹ️</span>'
+
+    all_source_names = [f["title"] for f in (feeds or [])]
+    all_sources_json = json.dumps(all_source_names, ensure_ascii=False)
 
     template = """<!DOCTYPE html>
 <html lang="de" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>24h Executive Archiv</title>
+  <title>24h-Archiv</title>
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#121418">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
   <style>
     __SHARED_CSS__
-
-    body {
-      padding: 24px 40px;
-      line-height: 1.6;
-      min-height: 100vh;
-    }
-    .container { max-width: 1300px; margin: 0 auto; }
-    .top-nav {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--border);
-    }
-    .back-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      color: var(--accent);
-      text-decoration: none;
-      font-size: 0.9rem;
-      font-weight: 600;
-    }
-    .header { margin-bottom: 24px; }
-    .header h1 { font-size: 1.6rem; color: var(--text-bold); font-weight: 700; }
-    .header p { color: var(--text-muted); font-size: 0.85rem; margin-top: 4px; }
-    .summary-badge {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      padding: 12px 18px;
-      border-radius: 8px;
-      margin-bottom: 28px;
-      font-size: 0.9rem;
-      color: var(--text-muted);
-    }
-    .source-block { margin-bottom: 36px; }
-    .source-title {
-      font-size: 1.25rem;
-      color: var(--text-bold);
-      margin-bottom: 16px;
-      border-bottom: 2px solid var(--accent);
-      display: inline-block;
-      padding-bottom: 4px;
-      font-weight: 700;
-    }
-
-    .archive-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-      gap: 18px;
-      align-items: stretch;
-    }
-
-    @media (max-width: 768px) {
-      body { padding: 16px 12px; }
-      .archive-grid {
-        grid-template-columns: 1fr;
-        gap: 12px;
-      }
-      .feed-card { padding: 14px; }
-      .feed-thumb { height: 150px; }
-    }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="top-nav">
-      <a href="index.html" class="back-btn">← Zurück zum Live-Feed</a>
-      <button class="theme-toggle" onclick="toggleTheme()" title="Dark/Light Mode umschalten">🌓</button>
+  __SHARED_MODALS__
+
+  <div class="sidebar-backdrop" id="backdrop" onclick="toggleSidebar()"></div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div>
+        <h1>⚡ 24h-Archiv</h1>
+        <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
+          Stand: __NOW_STR__<br>
+          <span style="color: var(--accent); cursor: pointer;" id="sidebar-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
+          __HEALTH_BLOCK__
+        </p>
+      </div>
+      <button class="close-btn" onclick="toggleSidebar()">&times;</button>
     </div>
-    <div class="header">
-      <h1>📑 24h Executive Archiv</h1>
-      <p>Stand: __NOW_STR__ • Alle Themen der letzten 24 Stunden im Überblick</p>
+    <ul class="source-list" id="source-list">
+      <li>
+        <button class="source-btn active" onclick="filterSource('all', this)">
+          <span>Alle Meldungen</span>
+          <span class="badge" id="total-badge">0</span>
+        </button>
+      </li>
+    </ul>
+    <div class="sidebar-footer">
+      <a href="index.html" class="archive-link-btn">← Zurück zum Live-Feed</a>
     </div>
-    <div class="summary-badge" id="archive-badge">
-      Entschlüssle Archiv...
+  </aside>
+
+  <main class="main">
+    <div class="stream-header">
+      <div class="header-left">
+        <button class="menu-toggle" onclick="toggleSidebar()" title="Menü ein-/ausblenden (Taste: [)">☰</button>
+        <h2 id="current-title">24h-Archiv</h2>
+      </div>
+      <div class="header-right">
+        <input type="search" class="search-input" id="search-box" placeholder="Archiv durchsuchen..." oninput="filterSearch(this.value)">
+        <button class="theme-toggle" id="theme-btn" onclick="toggleTheme()" title="Dark/Light Mode umschalten">🌓</button>
+      </div>
     </div>
-    <div id="archive-content"></div>
-  </div>
+    <div id="archive-container" class="cards-grid"></div>
+  </main>
 
   <script>
-    function initTheme() {
-      const savedTheme = localStorage.getItem('hub_theme');
-      if (savedTheme) {
-        document.documentElement.setAttribute('data-theme', savedTheme);
-      } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
-        document.documentElement.setAttribute('data-theme', 'light');
-      }
-    }
+    let archiveArticles = [];
+    let activeArticlesCollection = [];
+    let allSourceCounts = {};
+    const configuredSources = __CONFIGURED_SOURCES__;
+    const feedHealthData = __HEALTH_DATA__;
 
-    function toggleTheme() {
-      const current = document.documentElement.getAttribute('data-theme') || 'dark';
-      const target = current === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', target);
-      localStorage.setItem('hub_theme', target);
-    }
-
-    function formatRelativeTime(isoDateStr) {
-      if (!isoDateStr) return '';
-      try {
-        const diffSec = Math.floor((new Date() - new Date(isoDateStr)) / 1000);
-        if (isNaN(diffSec)) return '';
-        if (diffSec < 60) return '• gerade eben';
-        const m = Math.floor(diffSec / 60);
-        if (m < 60) return `• vor ${m}m`;
-        const h = Math.floor(m / 60);
-        if (h < 24) return `• vor ${h}h`;
-        return `• vor ${Math.floor(h / 24)}d`;
-      } catch(e) { return ''; }
-    }
+    __SHARED_JS__
 
     async function loadArchive() {
       initTheme();
-      const r = await fetch('data.json');
-      const enc = await r.text();
-      const pw = localStorage.getItem('hub_key');
-      let articles = [];
+      initSidebarState();
 
+      let articles = [];
       try {
+        const r = await fetch('data.json');
+        const enc = await r.text();
+        const pw = localStorage.getItem('hub_key');
+
         if (enc.trim().startsWith('[')) {
           articles = JSON.parse(enc);
         } else if (pw) {
@@ -1649,68 +1523,135 @@ def render_archive_html():
       } catch(e) {}
 
       if (!articles || !articles.length) {
-        document.getElementById('archive-badge').textContent = 'Keine Daten gefunden oder Passwort nicht gespeichert. Bitte erst im Feed anmelden.';
+        document.getElementById('current-title').textContent = '24h-Archiv (0)';
+        document.getElementById('archive-container').innerHTML = 
+          '<p style="color:var(--text-muted); padding:20px 0;">Keine Daten geladen oder Passwort fehlt. Bitte erst im Live-Feed anmelden.</p>';
         return;
       }
 
       const cutoff = new Date(Date.now() - 24 * 3600 * 1000);
-      const recent = articles.filter(a => {
+      archiveArticles = articles.filter(a => {
         try { return new Date(a.published) >= cutoff; } catch(e) { return true; }
       });
 
+      activeArticlesCollection = archiveArticles;
+      renderArchiveUI();
+    }
+
+    function renderArchiveUI() {
+      const container = document.getElementById('archive-container');
+      const sourceList = document.getElementById('source-list');
+      const totalBadge = document.getElementById('total-badge');
+      totalBadge.textContent = archiveArticles.length;
+
       let totalDups = 0;
-      const sourcesMap = {};
-      recent.forEach(a => {
+      allSourceCounts = {};
+      archiveArticles.forEach(a => {
         totalDups += (a.other_sources || []).length;
         const s = a.source || "Unbekannt";
-        if (!sourcesMap[s]) sourcesMap[s] = [];
-        sourcesMap[s].push(a);
+        allSourceCounts[s] = (allSourceCounts[s] || 0) + 1;
       });
 
-      document.getElementById('archive-badge').innerHTML = 
-        `<strong>${recent.length} Meldungen</strong> erfasst • <strong style="color: var(--accent);">${totalDups} parallele Berichte</strong> gebündelt.`;
+      document.getElementById('current-title').textContent = `24h-Archiv (${archiveArticles.length})`;
+      const sidebarDupInfo = document.getElementById('sidebar-dup-info');
+      if (sidebarDupInfo) sidebarDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
 
-      let html = "";
-      const sortedSources = Object.entries(sourcesMap).sort((a, b) => b[1].length - a[1].length);
+      const knownSources = new Set([...configuredSources, ...Object.keys(allSourceCounts)]);
+      const sortedSources = Array.from(knownSources).sort((a, b) => {
+        const countA = allSourceCounts[a] || 0;
+        const countB = allSourceCounts[b] || 0;
+        return countB !== countA ? countB - countA : a.localeCompare(b);
+      });
 
-      for (const [sourceName, items] of sortedSources) {
-        html += `<div class="source-block"><h2 class="source-title">${escapeHtml(sourceName)} (${items.length})</h2><div class="archive-grid">`;
-        items.forEach(it => {
-          const others = (it.other_sources && it.other_sources.length) 
-            ? `<span class="feed-others">• Auch bei: ${escapeHtml(it.other_sources.join(", "))}</span>` : "";
-          const img = it.image ? `<img class="feed-thumb" src="${it.image}" loading="lazy" alt="Thumbnail" onerror="this.remove()" />` : "";
-          const timeAgo = formatRelativeTime(it.published);
+      sortedSources.forEach(sourceName => {
+        const count = allSourceCounts[sourceName] || 0;
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <button class="source-btn" onclick="filterSource('${escapeHtml(sourceName)}', this)">
+            <span>${escapeHtml(sourceName)}</span>
+            <span class="badge">${count}</span>
+          </button>`;
+        sourceList.appendChild(li);
+      });
 
-          html += `
-            <article class="feed-card">
-              <div class="feed-content">
-                <div class="feed-meta">
-                  <span class="feed-source">${escapeHtml(it.source)}</span>
-                  <span class="feed-time">${timeAgo}</span>
-                  ${others}
-                </div>
-                <a class="feed-title" href="${escapeHtml(it.link)}" target="_blank" rel="noopener">${escapeHtml(it.title)}</a>
-                <p class="feed-summary">${it.summary}</p>
+      let htmlCards = "";
+      archiveArticles.forEach(a => {
+        const linkHash = Math.abs(hashString(a.link));
+        const others = (a.other_sources && a.other_sources.length) 
+          ? `<span class="feed-others">• Auch bei: ${escapeHtml(a.other_sources.join(", "))}</span>` : "";
+        const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" alt="Thumbnail" onerror="this.remove()" />` : "";
+        const linkedSources = [a.source, ...(a.other_sources || [])].join(";;;");
+        const timeAgo = formatRelativeTime(a.published);
+
+        htmlCards += `
+          <article class="feed-card" data-id="${linkHash}" data-sources="${escapeHtml(linkedSources)}">
+            <div class="feed-content">
+              <div class="feed-meta">
+                <span class="feed-source">${escapeHtml(a.source)}</span>
+                <span class="feed-time">${timeAgo}</span>
+                ${others}
               </div>
-              ${img}
-            </article>`;
-        });
-        html += `</div></div>`;
-      }
-      document.getElementById('archive-content').innerHTML = html;
+              <a class="feed-title" href="${escapeHtml(a.link)}" target="_blank" rel="noopener">${escapeHtml(a.title)}</a>
+              <p class="feed-summary">${a.summary}</p>
+            </div>
+            ${img}
+          </article>`;
+      });
+      container.innerHTML = htmlCards;
     }
 
-    function escapeHtml(s) {
-      return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    let activeSource = 'all';
+    function filterSource(source, btn) {
+      activeSource = source;
+      document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      document.getElementById('current-title').textContent = (source === 'all')
+        ? `24h-Archiv (${archiveArticles.length})`
+        : `${source} (${allSourceCounts[source] || 0})`;
+
+      applyCombinedFilters();
+      if (window.innerWidth <= 768) toggleSidebar();
     }
+
+    let searchQuery = '';
+    function filterSearch(q) {
+      searchQuery = q.toLowerCase().trim();
+      applyCombinedFilters();
+    }
+
+    function applyCombinedFilters() {
+      document.querySelectorAll('.feed-card').forEach(card => {
+        const cardSources = (card.dataset.sources || "").split(";;;");
+        const matchesSource = (activeSource === 'all' || cardSources.includes(activeSource));
+        const matchesSearch = !searchQuery || card.textContent.toLowerCase().includes(searchQuery);
+        card.style.display = (matchesSource && matchesSearch) ? '' : 'none';
+      });
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (document.activeElement === document.getElementById('search-box')) {
+        if (e.key === 'Escape') document.getElementById('search-box').blur();
+        return;
+      }
+      if (e.key === '[') { e.preventDefault(); toggleSidebar(); }
+      else if (e.key === 'Escape') { closeHealthModal(); closeDuplicateModal(); }
+      else if (e.key === '/') { e.preventDefault(); document.getElementById('search-box').focus(); }
+    });
 
     document.addEventListener('DOMContentLoaded', loadArchive);
   </script>
 </body>
 </html>
 """
+    health_replacement = f"<br>{health_text}" if health_text else ""
     return template.replace("__SHARED_CSS__", SHARED_CSS)\
-                   .replace("__NOW_STR__", now_str)
+                   .replace("__SHARED_MODALS__", SHARED_MODALS)\
+                   .replace("__SHARED_JS__", SHARED_JS)\
+                   .replace("__NOW_STR__", now_str)\
+                   .replace("__HEALTH_BLOCK__", health_replacement)\
+                   .replace("__HEALTH_DATA__", health_json)\
+                   .replace("__CONFIGURED_SOURCES__", all_sources_json)
 
 
 if __name__ == "__main__":
@@ -1744,7 +1685,7 @@ if __name__ == "__main__":
     # 4. Batch-Deduplizierung
     bundled_new = consolidate_articles(truly_new_items)
 
-    # 5. Echte Unikate an Gemini senden (ohne Kategorisierung)
+    # 5. Echte Unikate an Gemini senden (Parallel-Chunks)
     if bundled_new:
         processed_new = summarize_delta_with_gemini(bundled_new)
         combined_articles = processed_new + cached_articles
@@ -1754,14 +1695,8 @@ if __name__ == "__main__":
     # 6. Globaler Bereinigungslauf
     cleaned_articles = consolidate_articles(combined_articles)
 
-    # 7. Streng chronologisch sortieren & ungenutzte Server-Felder (wie priority) fürs Frontend strippen
-    def parse_pub_date(a):
-        try:
-            return datetime.datetime.fromisoformat(a.get("published", "").replace("Z", "+00:00"))
-        except Exception:
-            return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
-
-    final_articles = sorted(cleaned_articles, key=parse_pub_date, reverse=True)
+    # 7. Chronologisch sortieren (über vorkalkulierten _ts-Wert) & Payload abspecken
+    final_articles = sorted(cleaned_articles, key=lambda a: a.get("_ts", 0), reverse=True)
 
     frontend_articles = [
         {
@@ -1776,10 +1711,8 @@ if __name__ == "__main__":
         for a in final_articles
     ]
 
-    # Prüfen, ob sich inhaltlich überhaupt etwas geändert hat
     has_changes = bool(bundled_new) or (len(cached_articles) != len(cleaned_articles))
 
-    # GITHUB_OUTPUT für die Workflow-Steuerung setzen
     if "GITHUB_OUTPUT" in os.environ:
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as gh_out:
             gh_out.write(f"deploy={'true' if has_changes else 'false'}\n")
@@ -1799,6 +1732,6 @@ if __name__ == "__main__":
     with open("public/index.html", "w", encoding="utf-8") as f:
         f.write(html_page)
 
-    archive_page = render_archive_html()
+    archive_page = render_archive_html(feed_health, feeds)
     with open("public/archive.html", "w", encoding="utf-8") as f:
         f.write(archive_page)
