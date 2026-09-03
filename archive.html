@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>24h-Archiv</title>
+  <title>Archiv</title>
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -374,11 +374,11 @@
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <div>
-        <h1>⚡ 24h-Archiv</h1>
+        <h1>⚡ Archiv (24–48h)</h1>
         <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
-          Stand: 03.09.2026, 14:06 Uhr<br>
+          Stand: 03.09.2026, 14:43 Uhr<br>
           <span style="color: var(--accent); cursor: pointer;" id="sidebar-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
-          <br><span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: 9to5Linux">🟡 21/22 Feeds (1 gestört) ℹ️</span>
+          <br><span style="cursor:pointer;" onclick="openHealthModal()" title="Klicken für Feed-Details">🟢 22/22 Feeds online</span>
         </p>
       </div>
       <button class="close-btn" onclick="toggleSidebar()">&times;</button>
@@ -400,7 +400,7 @@
     <div class="stream-header">
       <div class="header-left">
         <button class="menu-toggle" onclick="toggleSidebar()" title="Menü ein-/ausblenden (Taste: [)">☰</button>
-        <h2 id="current-title">24h-Archiv</h2>
+        <h2 id="current-title">Archiv</h2>
       </div>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Archiv durchsuchen..." oninput="filterSearch(this.value)">
@@ -415,7 +415,7 @@
     let activeArticlesCollection = [];
     let allSourceCounts = {};
     const configuredSources = ["ComputerBase", "OMG! Ubuntu!", "9to5Google", "Topthemen - SZ.de", "WinFuture News", "GoogleWatchBlog", "mobiFlip", "Android Headlines", "Android Police", "teltarif.de", "Düsseldorf | RP ONLINE", "Caschys Blog", "Notebookcheck.com", "Deskmodder.de", "heise online News", "Android Authority", "XDA", "Travel-Dealz.de", "SmartDroid.de", "Aktuell - FAZ.NET", "Android Sage", "9to5Linux"];
-    const feedHealthData = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 200}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 200}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 200}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "ok", "code": 200}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 200}, {"title": "SmartDroid.de", "status": "ok", "code": 200}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 304}, {"title": "9to5Linux", "status": "exception", "code": "timeout/conn"}];
+    const feedHealthData = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 304}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 200}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 200}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "ok", "code": 200}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 200}, {"title": "SmartDroid.de", "status": "ok", "code": 200}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 304}, {"title": "9to5Linux", "status": "ok", "code": 304}];
 
     
     function escapeHtml(s) {
@@ -559,15 +559,22 @@
       } catch(e) {}
 
       if (!articles || !articles.length) {
-        document.getElementById('current-title').textContent = '24h-Archiv (0)';
+        document.getElementById('current-title').textContent = 'Archiv (0)';
         document.getElementById('archive-container').innerHTML = 
           '<p style="color:var(--text-muted); padding:20px 0;">Keine Daten geladen oder Passwort fehlt. Bitte erst im Live-Feed anmelden.</p>';
         return;
       }
 
-      const cutoff = new Date(Date.now() - 24 * 3600 * 1000);
+      // Archiv: Streng vor 24 bis vor 48 Stunden
+      const now = Date.now();
+      const cutoffRecent = new Date(now - 24 * 3600 * 1000);
+      const cutoffOld = new Date(now - 48 * 3600 * 1000);
+
       archiveArticles = articles.filter(a => {
-        try { return new Date(a.published) >= cutoff; } catch(e) { return true; }
+        try {
+          const pub = new Date(a.published);
+          return pub < cutoffRecent && pub >= cutoffOld;
+        } catch(e) { return false; }
       });
 
       activeArticlesCollection = archiveArticles;
@@ -588,7 +595,7 @@
         allSourceCounts[s] = (allSourceCounts[s] || 0) + 1;
       });
 
-      document.getElementById('current-title').textContent = `24h-Archiv (${archiveArticles.length})`;
+      document.getElementById('current-title').textContent = `Archiv (${archiveArticles.length})`;
       const sidebarDupInfo = document.getElementById('sidebar-dup-info');
       if (sidebarDupInfo) sidebarDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
 
@@ -643,7 +650,7 @@
       btn.classList.add('active');
 
       document.getElementById('current-title').textContent = (source === 'all')
-        ? `24h-Archiv (${archiveArticles.length})`
+        ? `Archiv (${archiveArticles.length})`
         : `${source} (${allSourceCounts[source] || 0})`;
 
       applyCombinedFilters();
