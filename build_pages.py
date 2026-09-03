@@ -22,7 +22,7 @@ import requests
 
 # --- Konfiguration ---
 DEFAULT_PRIO = 1
-MAX_RETENTION_HOURS = 36
+MAX_RETENTION_HOURS = 48
 REMOTE_DATA_URL = "https://schoerb.github.io/news-hub/data.json"
 BERLIN_TZ = zoneinfo.ZoneInfo("Europe/Berlin")
 
@@ -1100,7 +1100,7 @@ def render_html_dashboard(feed_health=None, feeds=None):
       </li>
     </ul>
     <div class="sidebar-footer">
-      <a href="archive.html" class="archive-link-btn" style="margin-bottom:8px;">📑 Zum 24h-Archiv</a>
+      <a href="archive.html" class="archive-link-btn" style="margin-bottom:8px;">📑 Zum Archiv (24–48h)</a>
       <button class="mark-all-btn" onclick="markAllAsRead()">✓ Alle als gelesen markieren</button>
       <div class="shortcuts-hint">Tasten: <strong>J/K</strong> Nav • <strong>O</strong> Öffnen • <strong>M</strong> Gelesen • <strong>[</strong> Menü</div>
     </div>
@@ -1124,6 +1124,7 @@ def render_html_dashboard(feed_health=None, feeds=None):
   <script>
     let rawEncryptedData = "";
     let globalArticles = [];
+    let liveArticles = [];
     let activeArticlesCollection = [];
     let allSourceCounts = {};
     const configuredSources = __CONFIGURED_SOURCES__;
@@ -1212,8 +1213,15 @@ def render_html_dashboard(feed_health=None, feeds=None):
 
     function onDataLoaded() {
       document.getElementById('auth-overlay').style.display = 'none';
-      activeArticlesCollection = globalArticles;
-      renderUI(globalArticles);
+
+      // Live-Feed: Streng 0 bis 24 Stunden alt
+      const cutoffLive = new Date(Date.now() - 24 * 3600 * 1000);
+      liveArticles = globalArticles.filter(a => {
+        try { return new Date(a.published) >= cutoffLive; } catch(e) { return true; }
+      });
+
+      activeArticlesCollection = liveArticles;
+      renderUI(liveArticles);
       initReadState();
       updateRelativeTimes();
       initSidebarState();
@@ -1339,7 +1347,7 @@ def render_html_dashboard(feed_health=None, feeds=None):
       btn.classList.add('active');
 
       document.getElementById('current-title').textContent = (source === 'all')
-        ? `Alle Meldungen (${globalArticles.length})`
+        ? `Alle Meldungen (${liveArticles.length})`
         : `${source} (${allSourceCounts[source] || 0})`;
 
       applyCombinedFilters();
@@ -1439,7 +1447,7 @@ def render_archive_html(feed_health=None, feeds=None):
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>24h-Archiv</title>
+  <title>Archiv</title>
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -1459,7 +1467,7 @@ def render_archive_html(feed_health=None, feeds=None):
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
       <div>
-        <h1>⚡ 24h-Archiv</h1>
+        <h1>⚡ Archiv (24–48h)</h1>
         <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
           Stand: __NOW_STR__<br>
           <span style="color: var(--accent); cursor: pointer;" id="sidebar-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
@@ -1485,7 +1493,7 @@ def render_archive_html(feed_health=None, feeds=None):
     <div class="stream-header">
       <div class="header-left">
         <button class="menu-toggle" onclick="toggleSidebar()" title="Menü ein-/ausblenden (Taste: [)">☰</button>
-        <h2 id="current-title">24h-Archiv</h2>
+        <h2 id="current-title">Archiv</h2>
       </div>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Archiv durchsuchen..." oninput="filterSearch(this.value)">
@@ -1523,15 +1531,22 @@ def render_archive_html(feed_health=None, feeds=None):
       } catch(e) {}
 
       if (!articles || !articles.length) {
-        document.getElementById('current-title').textContent = '24h-Archiv (0)';
+        document.getElementById('current-title').textContent = 'Archiv (0)';
         document.getElementById('archive-container').innerHTML = 
           '<p style="color:var(--text-muted); padding:20px 0;">Keine Daten geladen oder Passwort fehlt. Bitte erst im Live-Feed anmelden.</p>';
         return;
       }
 
-      const cutoff = new Date(Date.now() - 24 * 3600 * 1000);
+      // Archiv: Streng vor 24 bis vor 48 Stunden
+      const now = Date.now();
+      const cutoffRecent = new Date(now - 24 * 3600 * 1000);
+      const cutoffOld = new Date(now - 48 * 3600 * 1000);
+
       archiveArticles = articles.filter(a => {
-        try { return new Date(a.published) >= cutoff; } catch(e) { return true; }
+        try {
+          const pub = new Date(a.published);
+          return pub < cutoffRecent && pub >= cutoffOld;
+        } catch(e) { return false; }
       });
 
       activeArticlesCollection = archiveArticles;
@@ -1552,7 +1567,7 @@ def render_archive_html(feed_health=None, feeds=None):
         allSourceCounts[s] = (allSourceCounts[s] || 0) + 1;
       });
 
-      document.getElementById('current-title').textContent = `24h-Archiv (${archiveArticles.length})`;
+      document.getElementById('current-title').textContent = `Archiv (${archiveArticles.length})`;
       const sidebarDupInfo = document.getElementById('sidebar-dup-info');
       if (sidebarDupInfo) sidebarDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
 
@@ -1607,7 +1622,7 @@ def render_archive_html(feed_health=None, feeds=None):
       btn.classList.add('active');
 
       document.getElementById('current-title').textContent = (source === 'all')
-        ? `24h-Archiv (${archiveArticles.length})`
+        ? `Archiv (${archiveArticles.length})`
         : `${source} (${allSourceCounts[source] || 0})`;
 
       applyCombinedFilters();
