@@ -71,7 +71,7 @@
       border-radius: 12px;
       padding: 24px;
       width: 100%;
-      max-width: 480px;
+      max-width: 520px;
       max-height: 80vh;
       display: flex;
       flex-direction: column;
@@ -393,7 +393,7 @@
     </div>
   </div>
 
-  <!-- Duplicate Stats Modal -->
+  <!-- Duplicate Stats Modal mit interaktivem Akkordeon -->
   <div id="duplicate-modal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
@@ -401,7 +401,7 @@
         <button class="close-btn" onclick="closeDuplicateModal()">&times;</button>
       </div>
       <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
-        Übersicht der Quellen, deren Doppelberichte gebündelt wurden:
+        Klicke auf eine Quelle, um die verworfenen Artikel und deren Zuordnung anzuzeigen:
       </p>
       <div id="duplicate-list" class="modal-body"></div>
       <button class="modal-close-btn" onclick="closeDuplicateModal()">Schließen</button>
@@ -416,9 +416,9 @@
       <div>
         <h1>⚡ News-Hub</h1>
         <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
-          Stand: 04.09.2026, 13:44 Uhr<br>
+          Stand: 04.09.2026, 14:10 Uhr<br>
           <span style="color: var(--accent); cursor: pointer;" id="sidebar-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
-          <br><span style="cursor:pointer;" onclick="openHealthModal()" title="Klicken für Feed-Details">🟢 22/22 Feeds online</span>
+          <br><span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: Android Headlines">🟡 21/22 Feeds (1 gestört) ℹ️</span>
         </p>
       </div>
       <button class="close-btn" onclick="toggleSidebar()">&times;</button>
@@ -460,7 +460,7 @@
     let activeArticlesCollection = [];
     let allSourceCounts = {};
     const configuredSources = ["ComputerBase", "OMG! Ubuntu!", "9to5Google", "Topthemen - SZ.de", "WinFuture News", "GoogleWatchBlog", "mobiFlip", "Android Headlines", "Android Police", "teltarif.de", "Düsseldorf | RP ONLINE", "Caschys Blog", "Notebookcheck.com", "Deskmodder.de", "heise online News", "Android Authority", "XDA", "Travel-Dealz.de", "SmartDroid.de", "Aktuell - FAZ.NET", "Android Sage", "9to5Linux"];
-    const feedHealthData = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 304}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 304}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 304}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 304}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "ok", "code": 200}, {"title": "heise online News", "status": "ok", "code": 304}, {"title": "Android Authority", "status": "ok", "code": 304}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 304}, {"title": "SmartDroid.de", "status": "ok", "code": 304}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 304}, {"title": "9to5Linux", "status": "ok", "code": 304}];
+    const feedHealthData = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 304}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 200}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 304}, {"title": "Android Headlines", "status": "error", "code": 520}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "ok", "code": 200}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 304}, {"title": "SmartDroid.de", "status": "ok", "code": 304}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 304}, {"title": "9to5Linux", "status": "ok", "code": 304}];
 
     
     function escapeHtml(s) {
@@ -552,32 +552,54 @@
 
     function openDuplicateModal() {
       const listEl = document.getElementById('duplicate-list');
-      const dupCounts = {};
+      const dupMap = {};
       let totalDups = 0;
 
       activeArticlesCollection.forEach(a => {
-        (a.other_sources || []).forEach(src => {
-          dupCounts[src] = (dupCounts[src] || 0) + 1;
+        (a.merged_details || []).forEach(m => {
+          if (!dupMap[m.source]) dupMap[m.source] = [];
+          dupMap[m.source].push(m);
           totalDups++;
         });
       });
 
-      const sortedDups = Object.entries(dupCounts).sort((a, b) => b[1] - a[1]);
-      if (!sortedDups.length) {
+      const sortedSources = Object.entries(dupMap).sort((a, b) => b[1].length - a[1].length);
+      if (!sortedSources.length) {
         listEl.innerHTML = '<p style="color:var(--text-muted); padding:12px 0;">Keine zusammengeführten Duplikate im aktuellen Datenbestand.</p>';
       } else {
         listEl.innerHTML = `
           <div style="margin-bottom:12px; font-weight:600; color:var(--accent);">
-            Gesamt: ${totalDups} entfernte Doppelberichte
+            Gesamt: ${totalDups} entfernte Doppelberichte (Klick auf Badge zum Einsehen)
           </div>
-        ` + sortedDups.map(([src, count]) => `
-          <div class="modal-row">
-            <span style="font-weight:500; color:var(--text);">${escapeHtml(src)}</span>
-            <span class="badge" style="background:var(--accent-dim); color:var(--accent); font-weight:600;">${count} Dubletten</span>
+        ` + sortedSources.map(([src, items], idx) => `
+          <div style="border-bottom: 1px solid var(--border); padding: 8px 0;">
+            <div class="modal-row" style="border:none; padding:4px 0; cursor:pointer;" onclick="toggleDupDetails('dup-detail-${idx}')">
+              <span style="font-weight:600; color:var(--text);">${escapeHtml(src)}</span>
+              <span class="badge" style="background:var(--accent-dim); color:var(--accent); font-weight:600; cursor:pointer;">
+                ${items.length} Dubletten ▾
+              </span>
+            </div>
+            <div id="dup-detail-${idx}" style="display:none; padding:8px 0 4px 10px; font-size:0.8rem; border-left:2px solid var(--accent); margin-top:6px;">
+              ${items.map(it => `
+                <div style="margin-bottom:8px;">
+                  <a href="${escapeHtml(it.link)}" target="_blank" rel="noopener" style="color:var(--link); text-decoration:none; font-weight:500;">
+                    🔗 ${escapeHtml(it.title)}
+                  </a>
+                  <div style="color:var(--text-muted); font-size:0.75rem; margin-top:2px;">
+                    ↳ Gematcht mit: <em>"${escapeHtml(it.matched_with)}"</em>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
           </div>
         `).join('');
       }
       document.getElementById('duplicate-modal').style.display = 'flex';
+    }
+
+    function toggleDupDetails(elementId) {
+      const el = document.getElementById(elementId);
+      if (el) el.style.display = (el.style.display === 'none') ? 'block' : 'none';
     }
 
     function closeDuplicateModal() {
