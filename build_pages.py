@@ -26,7 +26,7 @@ MAX_RETENTION_HOURS = 48
 REMOTE_DATA_URL = "https://schoerb.github.io/news-hub/data.json"
 BERLIN_TZ = zoneinfo.ZoneInfo("Europe/Berlin")
 
-# Einstellbare Schwellenwerte für Dubletten
+# Einstellbare Schwellenwerte für Dubletten (via Workflow/Env)
 DEDUP_RATIO_THRESHOLD = float(os.environ.get("DEDUP_RATIO", "0.78"))
 DEDUP_OVERLAP_THRESHOLD = float(os.environ.get("DEDUP_OVERLAP", "0.65"))
 
@@ -444,7 +444,7 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
     return unique_list
 
 
-def summarize_chunk_with_gemini(client, chunk_items, max_retries=3):
+def summarize_chunk_with_gemini(client, chunk_items, max_retries=4):
     payload = [
         {
             "id": idx,
@@ -475,7 +475,6 @@ Artikel:
 {json.dumps(payload, ensure_ascii=False)}
 """
 
-    # Aktuelle API-Modellnamen
     models = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
 
     for attempt in range(max_retries):
@@ -513,8 +512,14 @@ Artikel:
                     })
             return processed
         except Exception as err:
-            print(f"⚠️ Gemini API Fehler (Versuch {attempt + 1}/{max_retries}) mit {selected_model}: {err}")
-            wait_time = (2 ** attempt) * 4
+            err_str = str(err)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                wait_time = 25 + (attempt * 10)
+                print(f"⏳ Rate-Limit (429) erreicht. Warte {wait_time}s vor erneutem Versuch...")
+            else:
+                wait_time = (2 ** attempt) * 4
+                print(f"⚠️ Gemini API Fehler (Versuch {attempt + 1}/{max_retries}) mit {selected_model}: {err}")
+            
             time.sleep(wait_time)
 
     print("❌ Chunk-Verarbeitung endgültig fehlgeschlagen, greife auf Fallback zurück.")
@@ -544,17 +549,15 @@ def summarize_delta_with_gemini(new_items):
         return []
 
     client = genai.Client(api_key=api_key)
-    chunk_size = 20
+    chunk_size = 40
     chunks = [new_items[i : i + chunk_size] for i in range(0, len(new_items), chunk_size)]
 
-    if len(chunks) == 1:
-        return summarize_chunk_with_gemini(client, chunks[0])
-
     all_processed = []
-    with ThreadPoolExecutor(max_workers=min(len(chunks), 3)) as ex:
-        futures = [ex.submit(summarize_chunk_with_gemini, client, c) for c in chunks]
-        for f in futures:
-            all_processed.extend(f.result())
+    for idx, c in enumerate(chunks):
+        if idx > 0:
+            time.sleep(3)
+        res = summarize_chunk_with_gemini(client, c)
+        all_processed.extend(res)
 
     return all_processed
 
