@@ -128,6 +128,7 @@ def get_private_priorities() -> dict:
 # --- Pydantic Schemas für Gemini ---
 class DeltaItem(BaseModel):
     id: int = Field(description="Index des Artikels aus dem Batch")
+    title: str = Field(description="Präziser deutscher Titel ohne Clickbait. Falls Original englisch: exakt und sachlich ins Deutsche übersetzen.")
     summary: str = Field(description="Genau 1 prägnanter deutscher Satz. Schlüsselbegriffe mit **fett** hervorheben")
     use_image: bool = Field(default=False, description="True NUR wenn das Bild ein konkretes Gerät, UI-Element oder einen Chart zeigt")
 
@@ -429,9 +430,10 @@ def summarize_chunk_with_gemini(client, chunk_items, max_retries=3):
     ]
 
     prompt = f"""
-Fasse diese Tech-Artikel zusammen:
-1. Genau 1 prägnanter deutscher Satz pro Artikel. Hebe Schlüsselbegriffe mit **fett** hervor.
-2. 'use_image': True NUR wenn das Bild ein echtes Produkt, ein UI-Element oder einen Benchmark zeigt.
+Optimiere und fasse diese Tech-Artikel zusammen:
+1. 'title': Formuliere eine präzise, aussagekräftige Überschrift auf DEUTSCH (kein Clickbait, nenne konkrete Produktnamen, Versionsnummern oder Fakten). Falls der Quelltitel englisch ist, übersetze ihn sinngemäß und prägnant ins Deutsche.
+2. 'summary': Genau 1 prägnanter deutscher Satz. Hebe die wichtigsten 2-3 Schlüsselbegriffe mit **fett** hervor.
+3. 'use_image': True NUR wenn das Bild ein echtes Produkt, ein UI-Element oder einen Chart/Benchmark zeigt.
 
 Artikel:
 {json.dumps(payload, ensure_ascii=False)}
@@ -457,11 +459,12 @@ Artikel:
             for item in parsed.items:
                 if 0 <= item.id < len(chunk_items):
                     orig = chunk_items[item.id]
-                    clean_sum = html.escape(item.summary)
+                    clean_title = html.escape(item.title.strip())
+                    clean_sum = html.escape(item.summary.strip())
                     clean_sum = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", clean_sum)
 
                     processed.append({
-                        "title": orig["title"],
+                        "title": clean_title or orig["title"],
                         "link": orig["link"],
                         "source": orig["source"],
                         "other_sources": orig.get("other_sources", []),
@@ -1214,7 +1217,6 @@ def render_html_dashboard(feed_health=None, feeds=None):
     function onDataLoaded() {
       document.getElementById('auth-overlay').style.display = 'none';
 
-      // Live-Feed: Streng 0 bis 24 Stunden alt
       const cutoffLive = new Date(Date.now() - 24 * 3600 * 1000);
       liveArticles = globalArticles.filter(a => {
         try { return new Date(a.published) >= cutoffLive; } catch(e) { return true; }
@@ -1537,7 +1539,6 @@ def render_archive_html(feed_health=None, feeds=None):
         return;
       }
 
-      // Archiv: Streng vor 24 bis vor 48 Stunden
       const now = Date.now();
       const cutoffRecent = new Date(now - 24 * 3600 * 1000);
       const cutoffOld = new Date(now - 48 * 3600 * 1000);
@@ -1700,7 +1701,7 @@ if __name__ == "__main__":
     # 4. Batch-Deduplizierung
     bundled_new = consolidate_articles(truly_new_items)
 
-    # 5. Echte Unikate an Gemini senden (Parallel-Chunks)
+    # 5. Echte Unikate an Gemini senden (Titel-Optimierung & Zusammenfassung)
     if bundled_new:
         processed_new = summarize_delta_with_gemini(bundled_new)
         combined_articles = processed_new + cached_articles
