@@ -26,6 +26,10 @@ MAX_RETENTION_HOURS = 48
 REMOTE_DATA_URL = "https://schoerb.github.io/news-hub/data.json"
 BERLIN_TZ = zoneinfo.ZoneInfo("Europe/Berlin")
 
+# Einstellbare Schwellenwerte für Dubletten
+DEDUP_RATIO_THRESHOLD = float(os.environ.get("DEDUP_RATIO", "0.72"))
+DEDUP_OVERLAP_THRESHOLD = float(os.environ.get("DEDUP_OVERLAP", "0.50"))
+
 STOPWORDS = {
     # Deutsch
     "im", "in", "der", "die", "das", "den", "dem", "des", "für", "von", "mit", "ab", "sofort",
@@ -309,7 +313,6 @@ def fetch_all_feeds(feeds, cache_meta):
 
             items = []
             for e in parsed.entries:
-                entry_ts = None
                 pub_iso = None
                 if hasattr(e, "published_parsed") and e.published_parsed:
                     dt = datetime.datetime(*e.published_parsed[:6], tzinfo=datetime.timezone.utc)
@@ -370,24 +373,31 @@ def is_duplicate(title_a: str, title_b: str, memo_a=None, memo_b=None) -> bool:
     kw_a, num_a = memo_a if memo_a else extract_keywords(title_a)
     kw_b, num_b = memo_b if memo_b else extract_keywords(title_b)
 
-    if (num_a & num_b) and (kw_a & kw_b):
+    common_nums = num_a & num_b
+    common_kws = kw_a & kw_b
+
+    # 1. Zahlen-Regel: Nur wenn identische Nummern existieren UND mindestens 2 echte Keywords matchen
+    if common_nums and len(common_kws) >= 2:
         return True
 
+    # 2. Präfix-Matching erst ab 5 Zeichen
     sub_matches = set()
     for wa in kw_a:
         for wb in kw_b:
-            if len(wa) >= 4 and len(wb) >= 4 and wa[:4] == wb[:4]:
-                sub_matches.add(wa[:4])
+            if len(wa) >= 5 and len(wb) >= 5 and wa[:5] == wb[:5]:
+                sub_matches.add(wa[:5])
 
-    combined_overlap = len((kw_a & kw_b) | sub_matches)
+    combined_overlap = len(common_kws | sub_matches)
     min_len = min(len(kw_a), len(kw_b))
 
-    if combined_overlap >= 3 or (min_len > 0 and (combined_overlap / min_len) >= 0.33):
+    # 3. Kontrollierte Wortüberdeckung (Standard: 50%)
+    if min_len >= 3 and (combined_overlap / min_len) >= DEDUP_OVERLAP_THRESHOLD:
         return True
 
+    # 4. Sequenzabgleich geschärft (Standard: 0.72)
     clean_a = re.sub(r"[^\w\s]", "", title_a.lower())
     clean_b = re.sub(r"[^\w\s]", "", title_b.lower())
-    return SequenceMatcher(None, clean_a, clean_b).ratio() >= 0.60
+    return SequenceMatcher(None, clean_a, clean_b).ratio() >= DEDUP_RATIO_THRESHOLD
 
 
 def consolidate_articles(articles: list[dict]) -> list[dict]:
@@ -408,9 +418,19 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
             src = item.get("source")
             if src and src != match.get("source") and src not in others:
                 others.append(src)
+
+            # Details für das Dubletten-Inspektionsmodal merken
+            merged = match.setdefault("merged_details", [])
+            merged.append({
+                "source": src or "Unbekannt",
+                "title": item.get("title", ""),
+                "link": item.get("link", ""),
+                "matched_with": match.get("title", "")
+            })
         else:
             item_copy = dict(item)
             item_copy.setdefault("other_sources", [])
+            item_copy.setdefault("merged_details", [])
             unique_list.append(item_copy)
             cached_features.append(feat)
 
@@ -468,6 +488,7 @@ Artikel:
                         "link": orig["link"],
                         "source": orig["source"],
                         "other_sources": orig.get("other_sources", []),
+                        "merged_details": orig.get("merged_details", []),
                         "summary": clean_sum,
                         "image": orig["image"] if item.use_image else None,
                         "published": orig["published"],
@@ -484,6 +505,7 @@ Artikel:
             "link": o["link"],
             "source": o["source"],
             "other_sources": o.get("other_sources", []),
+            "merged_details": o.get("merged_details", []),
             "summary": html.escape(o["summary"]),
             "image": o["image"],
             "published": o["published"],
@@ -582,7 +604,7 @@ SHARED_CSS = """
       border-radius: 12px;
       padding: 24px;
       width: 100%;
-      max-width: 480px;
+      max-width: 520px;
       max-height: 80vh;
       display: flex;
       flex-direction: column;
@@ -862,7 +884,7 @@ SHARED_MODALS = """
     </div>
   </div>
 
-  <!-- Duplicate Stats Modal -->
+  <!-- Duplicate Stats Modal mit interaktivem Akkordeon -->
   <div id="duplicate-modal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
@@ -870,7 +892,7 @@ SHARED_MODALS = """
         <button class="close-btn" onclick="closeDuplicateModal()">&times;</button>
       </div>
       <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
-        Übersicht der Quellen, deren Doppelberichte gebündelt wurden:
+        Klicke auf eine Quelle, um die verworfenen Artikel und deren Zuordnung anzuzeigen:
       </p>
       <div id="duplicate-list" class="modal-body"></div>
       <button class="modal-close-btn" onclick="closeDuplicateModal()">Schließen</button>
@@ -968,32 +990,54 @@ SHARED_JS = """
 
     function openDuplicateModal() {
       const listEl = document.getElementById('duplicate-list');
-      const dupCounts = {};
+      const dupMap = {};
       let totalDups = 0;
 
       activeArticlesCollection.forEach(a => {
-        (a.other_sources || []).forEach(src => {
-          dupCounts[src] = (dupCounts[src] || 0) + 1;
+        (a.merged_details || []).forEach(m => {
+          if (!dupMap[m.source]) dupMap[m.source] = [];
+          dupMap[m.source].push(m);
           totalDups++;
         });
       });
 
-      const sortedDups = Object.entries(dupCounts).sort((a, b) => b[1] - a[1]);
-      if (!sortedDups.length) {
+      const sortedSources = Object.entries(dupMap).sort((a, b) => b[1].length - a[1].length);
+      if (!sortedSources.length) {
         listEl.innerHTML = '<p style="color:var(--text-muted); padding:12px 0;">Keine zusammengeführten Duplikate im aktuellen Datenbestand.</p>';
       } else {
         listEl.innerHTML = `
           <div style="margin-bottom:12px; font-weight:600; color:var(--accent);">
-            Gesamt: ${totalDups} entfernte Doppelberichte
+            Gesamt: ${totalDups} entfernte Doppelberichte (Klick auf Badge zum Einsehen)
           </div>
-        ` + sortedDups.map(([src, count]) => `
-          <div class="modal-row">
-            <span style="font-weight:500; color:var(--text);">${escapeHtml(src)}</span>
-            <span class="badge" style="background:var(--accent-dim); color:var(--accent); font-weight:600;">${count} Dubletten</span>
+        ` + sortedSources.map(([src, items], idx) => `
+          <div style="border-bottom: 1px solid var(--border); padding: 8px 0;">
+            <div class="modal-row" style="border:none; padding:4px 0; cursor:pointer;" onclick="toggleDupDetails('dup-detail-${idx}')">
+              <span style="font-weight:600; color:var(--text);">${escapeHtml(src)}</span>
+              <span class="badge" style="background:var(--accent-dim); color:var(--accent); font-weight:600; cursor:pointer;">
+                ${items.length} Dubletten ▾
+              </span>
+            </div>
+            <div id="dup-detail-${idx}" style="display:none; padding:8px 0 4px 10px; font-size:0.8rem; border-left:2px solid var(--accent); margin-top:6px;">
+              ${items.map(it => `
+                <div style="margin-bottom:8px;">
+                  <a href="${escapeHtml(it.link)}" target="_blank" rel="noopener" style="color:var(--link); text-decoration:none; font-weight:500;">
+                    🔗 ${escapeHtml(it.title)}
+                  </a>
+                  <div style="color:var(--text-muted); font-size:0.75rem; margin-top:2px;">
+                    ↳ Gematcht mit: <em>"${escapeHtml(it.matched_with)}"</em>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
           </div>
         `).join('');
       }
       document.getElementById('duplicate-modal').style.display = 'flex';
+    }
+
+    function toggleDupDetails(elementId) {
+      const el = document.getElementById(elementId);
+      if (el) el.style.display = (el.style.display === 'none') ? 'block' : 'none';
     }
 
     function closeDuplicateModal() {
@@ -1695,6 +1739,14 @@ if __name__ == "__main__":
             others = matched_cached.setdefault("other_sources", [])
             if raw["source"] != matched_cached["source"] and raw["source"] not in others:
                 others.append(raw["source"])
+
+            merged = matched_cached.setdefault("merged_details", [])
+            merged.append({
+                "source": raw.get("source", "Unbekannt"),
+                "title": raw.get("title", ""),
+                "link": raw.get("link", ""),
+                "matched_with": matched_cached.get("title", "")
+            })
         else:
             truly_new_items.append(raw)
 
@@ -1711,7 +1763,7 @@ if __name__ == "__main__":
     # 6. Globaler Bereinigungslauf
     cleaned_articles = consolidate_articles(combined_articles)
 
-    # 7. Chronologisch sortieren (über vorkalkulierten _ts-Wert) & Payload abspecken
+    # 7. Chronologisch sortieren & Payload abspecken
     final_articles = sorted(cleaned_articles, key=lambda a: a.get("_ts", 0), reverse=True)
 
     frontend_articles = [
@@ -1720,6 +1772,7 @@ if __name__ == "__main__":
             "link": a["link"],
             "source": a["source"],
             "other_sources": a.get("other_sources", []),
+            "merged_details": a.get("merged_details", []),
             "summary": a["summary"],
             "image": a.get("image"),
             "published": a.get("published"),
