@@ -21,6 +21,9 @@ concurrency:
   group: 'pages-deploy'
   cancel-in-progress: true
 
+env:
+  FORCE_REFRESH: "true"  
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
