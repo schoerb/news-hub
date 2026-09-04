@@ -35,6 +35,8 @@ Das System läuft vollständig automatisiert über **GitHub Actions**, fasst neu
 ├── requirements.txt         # Python-Abhängigkeiten mit Pip-Cache-Unterstützung
 └── README.md
 
+---
+
 ## 🛠️ Dateibeschreibungen
 
 ### `build_pages.py`
