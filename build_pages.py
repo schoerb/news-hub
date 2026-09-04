@@ -236,8 +236,6 @@ def load_cached_state():
     articles = []
     cache_meta = {}
     password = os.environ.get("PAGE_PASSWORD", "")
-
-    # Falls FORCE_REFRESH gesetzt ist, alten Remote-Cache ignorieren
     force_refresh = os.environ.get("FORCE_REFRESH", "").lower() in ("true", "1")
 
     if os.path.exists("public/data.json"):
@@ -477,7 +475,8 @@ Artikel:
 {json.dumps(payload, ensure_ascii=False)}
 """
 
-    models = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+    # Aktuelle API-Modellnamen
+    models = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
 
     for attempt in range(max_retries):
         selected_model = models[min(attempt, len(models) - 1)]
