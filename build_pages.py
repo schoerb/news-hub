@@ -27,8 +27,8 @@ REMOTE_DATA_URL = "https://schoerb.github.io/news-hub/data.json"
 BERLIN_TZ = zoneinfo.ZoneInfo("Europe/Berlin")
 
 # Einstellbare Schwellenwerte für Dubletten
-DEDUP_RATIO_THRESHOLD = float(os.environ.get("DEDUP_RATIO", "0.72"))
-DEDUP_OVERLAP_THRESHOLD = float(os.environ.get("DEDUP_OVERLAP", "0.50"))
+DEDUP_RATIO_THRESHOLD = float(os.environ.get("DEDUP_RATIO", "0.78"))
+DEDUP_OVERLAP_THRESHOLD = float(os.environ.get("DEDUP_OVERLAP", "0.65"))
 
 STOPWORDS = {
     # Deutsch
@@ -132,9 +132,9 @@ def get_private_priorities() -> dict:
 # --- Pydantic Schemas für Gemini ---
 class DeltaItem(BaseModel):
     id: int = Field(description="Index des Artikels aus dem Batch")
-    title: str = Field(description="Präziser deutscher Titel ohne Clickbait. Falls Original englisch: exakt und sachlich ins Deutsche übersetzen.")
-    summary: str = Field(description="Genau 1 prägnanter deutscher Satz. Schlüsselbegriffe mit **fett** hervorheben")
-    use_image: bool = Field(default=False, description="True NUR wenn das Bild ein konkretes Gerät, UI-Element oder einen Chart zeigt")
+    german_title: str = Field(description="Zwingend auf DEUTSCH. Englische Titel vollständig und sinngemäß ins Deutsche übersetzen. Kein Clickbait!")
+    summary: str = Field(description="Genau 1 prägnanter deutscher Satz. Schlüsselbegriffe mit **fett** hervorheben.")
+    use_image: bool = Field(default=False, description="True NUR wenn das Bild ein konkretes Gerät, UI-Element oder einen Chart zeigt.")
 
 
 class DeltaBatchResponse(BaseModel):
@@ -237,27 +237,32 @@ def load_cached_state():
     cache_meta = {}
     password = os.environ.get("PAGE_PASSWORD", "")
 
+    # Falls FORCE_REFRESH gesetzt ist, alten Remote-Cache ignorieren
+    force_refresh = os.environ.get("FORCE_REFRESH", "").lower() in ("true", "1")
+
     if os.path.exists("public/data.json"):
         try:
             with open("public/data.json", "r", encoding="utf-8") as f:
-                content = f.read()
-                if password:
-                    content = decrypt_payload(content, password)
-                articles = json.loads(content)
+                content = f.read().strip()
+                if content and content != "[]":
+                    if password:
+                        content = decrypt_payload(content, password)
+                    articles = json.loads(content)
         except Exception:
             pass
-    elif REMOTE_DATA_URL:
+    elif REMOTE_DATA_URL and not force_refresh:
         try:
             r = get_session().get(REMOTE_DATA_URL, timeout=4)
-            if r.ok:
-                content = r.text
-                if password:
-                    content = decrypt_payload(content, password)
-                articles = json.loads(content)
+            if r.ok and r.text.strip():
+                content = r.text.strip()
+                if content != "[]":
+                    if password:
+                        content = decrypt_payload(content, password)
+                    articles = json.loads(content)
         except Exception:
             pass
 
-    if os.path.exists("cache_meta.json"):
+    if os.path.exists("cache_meta.json") and not force_refresh:
         try:
             with open("cache_meta.json", "r", encoding="utf-8") as f:
                 cache_meta = json.load(f)
@@ -390,11 +395,11 @@ def is_duplicate(title_a: str, title_b: str, memo_a=None, memo_b=None) -> bool:
     combined_overlap = len(common_kws | sub_matches)
     min_len = min(len(kw_a), len(kw_b))
 
-    # 3. Kontrollierte Wortüberdeckung (Standard: 50%)
+    # 3. Kontrollierte Wortüberdeckung
     if min_len >= 3 and (combined_overlap / min_len) >= DEDUP_OVERLAP_THRESHOLD:
         return True
 
-    # 4. Sequenzabgleich geschärft (Standard: 0.72)
+    # 4. Sequenzabgleich
     clean_a = re.sub(r"[^\w\s]", "", title_a.lower())
     clean_b = re.sub(r"[^\w\s]", "", title_b.lower())
     return SequenceMatcher(None, clean_a, clean_b).ratio() >= DEDUP_RATIO_THRESHOLD
@@ -445,19 +450,28 @@ def summarize_chunk_with_gemini(client, chunk_items, max_retries=3):
     payload = [
         {
             "id": idx,
-            "title": a["title"],
+            "original_title": a["title"],
             "source": a["source"],
-            "text": a["summary"],
+            "raw_text": a["summary"],
             "has_image": bool(a.get("image")),
         }
         for idx, a in enumerate(chunk_items)
     ]
 
     prompt = f"""
-Optimiere und fasse diese Tech-Artikel zusammen:
-1. 'title': Formuliere eine präzise, aussagekräftige Überschrift auf DEUTSCH (kein Clickbait, nenne konkrete Produktnamen, Versionsnummern oder Fakten). Falls der Quelltitel englisch ist, übersetze ihn sinngemäß und prägnant ins Deutsche.
-2. 'summary': Genau 1 prägnanter deutscher Satz. Hebe die wichtigsten 2-3 Schlüsselbegriffe mit **fett** hervor.
-3. 'use_image': True NUR wenn das Bild ein echtes Produkt, ein UI-Element oder einen Chart/Benchmark zeigt.
+Du bist Chefredakteur eines deutschsprachigen Tech-Nachrichtenmagazins.
+Verarbeite die folgenden Artikel und antworte im geforderten JSON-Format.
+
+REGELN FÜR JEDEN ARTIKEL:
+1. 'german_title':
+   - JEDER englische Titel MUSS vollständig ins DEUTSCHE übersetzt werden. Es darf KEIN englischer Satz stehen bleiben.
+   - Entferne Clickbait: Nenne präzise das konkrete Modell, Update, den Fehler oder die Zahl.
+   - Eigennamen (z.B. 'Pixel 9a', 'MacBook Air', 'Nvidia GeForce') bleiben original.
+2. 'summary':
+   - Genau 1 prägnanter, vollständiger deutscher Satz.
+   - Hebe 2-3 zentrale Schlüsselwörter mit **fett** hervor.
+3. 'use_image':
+   - True NUR wenn das Bild ein konkretes Gerät, Screenshot oder Chart zeigt.
 
 Artikel:
 {json.dumps(payload, ensure_ascii=False)}
@@ -472,7 +486,7 @@ Artikel:
                 model=selected_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    temperature=0.2,
+                    temperature=0.1,
                     response_mime_type="application/json",
                     response_schema=DeltaBatchResponse,
                 ),
@@ -483,7 +497,7 @@ Artikel:
             for item in parsed.items:
                 if 0 <= item.id < len(chunk_items):
                     orig = chunk_items[item.id]
-                    clean_title = html.escape(item.title.strip())
+                    clean_title = html.escape(item.german_title.strip())
                     clean_sum = html.escape(item.summary.strip())
                     clean_sum = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", clean_sum)
 
@@ -499,10 +513,12 @@ Artikel:
                         "_ts": orig.get("_ts", 0),
                     })
             return processed
-        except Exception:
+        except Exception as err:
+            print(f"⚠️ Gemini API Fehler (Versuch {attempt + 1}/{max_retries}) mit {selected_model}: {err}")
             wait_time = (2 ** attempt) * 4
             time.sleep(wait_time)
 
+    print("❌ Chunk-Verarbeitung endgültig fehlgeschlagen, greife auf Fallback zurück.")
     return [
         {
             "title": o["title"],
@@ -525,10 +541,11 @@ def summarize_delta_with_gemini(new_items):
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
+        print("⚠️ Kein GEMINI_API_KEY vorhanden. Artikel werden unzusammengefasst übernommen.")
         return []
 
     client = genai.Client(api_key=api_key)
-    chunk_size = 25
+    chunk_size = 20
     chunks = [new_items[i : i + chunk_size] for i in range(0, len(new_items), chunk_size)]
 
     if len(chunks) == 1:
@@ -548,7 +565,7 @@ def expire_old_articles(articles):
     return [a for a in articles if a.get("_ts", 0) > cutoff_ts]
 
 
-# --- Gemeinsame UI-Komponenten (CSS, Modals, Core-JS) ---
+# --- UI & Layout Strings ---
 SHARED_CSS = """
     :root {
       --bg: #121418;
@@ -876,7 +893,6 @@ SHARED_CSS = """
 """
 
 SHARED_MODALS = """
-  <!-- Feed Health Modal -->
   <div id="health-modal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
@@ -888,7 +904,6 @@ SHARED_MODALS = """
     </div>
   </div>
 
-  <!-- Duplicate Stats Modal mit interaktivem Akkordeon -->
   <div id="duplicate-modal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
@@ -1001,7 +1016,6 @@ SHARED_JS = """
         const details = a.merged_details || [];
         const accountedSources = new Set();
 
-        // 1. Detaillierte Datensätze (aus neuen Durchläufen)
         details.forEach(m => {
           const s = m.source || "Unbekannt";
           if (!dupMap[s]) dupMap[s] = [];
@@ -1010,7 +1024,6 @@ SHARED_JS = """
           totalDups++;
         });
 
-        // 2. Fallback für ältere Cache-Artikel (vor Einführung von merged_details)
         (a.other_sources || []).forEach(src => {
           if (!accountedSources.has(src)) {
             if (!dupMap[src]) dupMap[src] = [];
@@ -1778,6 +1791,8 @@ if __name__ == "__main__":
             })
         else:
             truly_new_items.append(raw)
+
+    print(f"📦 Neue Unikate für Gemini: {len(truly_new_items)} (bereits im Cache: {len(cached_articles)})")
 
     # 4. Batch-Deduplizierung
     bundled_new = consolidate_articles(truly_new_items)
