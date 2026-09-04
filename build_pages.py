@@ -418,8 +418,10 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
             src = item.get("source")
             if src and src != match.get("source") and src not in others:
                 others.append(src)
+            for osrc in item.get("other_sources", []):
+                if osrc != match.get("source") and osrc not in others:
+                    others.append(osrc)
 
-            # Details für das Dubletten-Inspektionsmodal merken
             merged = match.setdefault("merged_details", [])
             merged.append({
                 "source": src or "Unbekannt",
@@ -427,6 +429,8 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
                 "link": item.get("link", ""),
                 "matched_with": match.get("title", "")
             })
+            for prev_m in item.get("merged_details", []):
+                merged.append(prev_m)
         else:
             item_copy = dict(item)
             item_copy.setdefault("other_sources", [])
@@ -459,7 +463,7 @@ Artikel:
 {json.dumps(payload, ensure_ascii=False)}
 """
 
-    models = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
+    models = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
     for attempt in range(max_retries):
         selected_model = models[min(attempt, len(models) - 1)]
@@ -994,10 +998,31 @@ SHARED_JS = """
       let totalDups = 0;
 
       activeArticlesCollection.forEach(a => {
-        (a.merged_details || []).forEach(m => {
-          if (!dupMap[m.source]) dupMap[m.source] = [];
-          dupMap[m.source].push(m);
+        const details = a.merged_details || [];
+        const accountedSources = new Set();
+
+        // 1. Detaillierte Datensätze (aus neuen Durchläufen)
+        details.forEach(m => {
+          const s = m.source || "Unbekannt";
+          if (!dupMap[s]) dupMap[s] = [];
+          dupMap[s].push(m);
+          accountedSources.add(s);
           totalDups++;
+        });
+
+        // 2. Fallback für ältere Cache-Artikel (vor Einführung von merged_details)
+        (a.other_sources || []).forEach(src => {
+          if (!accountedSources.has(src)) {
+            if (!dupMap[src]) dupMap[src] = [];
+            dupMap[src].push({
+              source: src,
+              title: "Titel im Alt-Cache nicht separat erfasst",
+              link: a.link,
+              matched_with: a.title,
+              is_legacy: true
+            });
+            totalDups++;
+          }
         });
       });
 
@@ -1007,7 +1032,7 @@ SHARED_JS = """
       } else {
         listEl.innerHTML = `
           <div style="margin-bottom:12px; font-weight:600; color:var(--accent);">
-            Gesamt: ${totalDups} entfernte Doppelberichte (Klick auf Badge zum Einsehen)
+            Gesamt: ${totalDups} bereinigte Doppelberichte (Klick auf Badge zum Einsehen)
           </div>
         ` + sortedSources.map(([src, items], idx) => `
           <div style="border-bottom: 1px solid var(--border); padding: 8px 0;">
@@ -1020,11 +1045,14 @@ SHARED_JS = """
             <div id="dup-detail-${idx}" style="display:none; padding:8px 0 4px 10px; font-size:0.8rem; border-left:2px solid var(--accent); margin-top:6px;">
               ${items.map(it => `
                 <div style="margin-bottom:8px;">
-                  <a href="${escapeHtml(it.link)}" target="_blank" rel="noopener" style="color:var(--link); text-decoration:none; font-weight:500;">
-                    🔗 ${escapeHtml(it.title)}
-                  </a>
+                  ${it.is_legacy 
+                    ? `<span style="color:var(--text-muted);">ℹ️ ${escapeHtml(it.title)}</span>`
+                    : `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener" style="color:var(--link); text-decoration:none; font-weight:500;">
+                         🔗 ${escapeHtml(it.title)}
+                       </a>`
+                  }
                   <div style="color:var(--text-muted); font-size:0.75rem; margin-top:2px;">
-                    ↳ Gematcht mit: <em>"${escapeHtml(it.matched_with)}"</em>
+                    ↳ Zusammengeführt mit: <em>"${escapeHtml(it.matched_with)}"</em>
                   </div>
                 </div>
               `).join('')}
@@ -1032,6 +1060,7 @@ SHARED_JS = """
           </div>
         `).join('');
       }
+
       document.getElementById('duplicate-modal').style.display = 'flex';
     }
 
