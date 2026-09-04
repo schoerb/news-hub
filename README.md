@@ -10,9 +10,9 @@ Das System läuft vollständig automatisiert über **GitHub Actions**, fasst neu
 
 - **Automatisierte Aggregation:** Ruft konfigurierte RSS/Atom-Feeds regelmäßig parallel und thread-safe ab (`HTTP 304 ETag/Last-Modified` Caching minimiert Bandbreite).
 - **Kontrollierbare Deduplizierung:** Erkennt identische Berichte aus unterschiedlichen Medien via Wortstamm-, Zahlen- und Ähnlichkeitsabgleich. Schwellenwerte (`DEDUP_OVERLAP`, `DEDUP_RATIO`) sind flexibel anpassbar.
-- **Dubletten-Inspektionsmodus:** Transparente Aufschlüsselung im UI-Modal. Ein Klick auf die Dubletten-Badges klappt alle verworfenen Originalartikel mit Direktlink und Zielzuordnung auf.
+- **Dubletten-Inspektionsmodus:** Transparente Aufschlüsselung im UI-Modal. Ein Klick auf die Dubletten-Badges klappt alle verworfenen Originalartikel mit Direktlink und Zielzuordnung auf (inkl. Fallback-Anzeige für Alt-Bestände).
 - **KI-Zusammenfassung & Titel-Optimierung (Gemini API):**
-  - Sachliche, präzise deutsche Schlagzeilen (entfernt Clickbait, übersetzt englische Titel sinngemäß).
+  - Sachliche, präzise deutsche Schlagzeilen (entfernt Clickbait, übersetzt fremdsprachige Titel sinngemäß).
   - Genau 1 prägnanter deutscher Satz mit **fett** hervorgehobenen Schlüsselbegriffen.
   - Bilderkennung filtert Tracker, Logos und Badges zuverlässig heraus.
 - **2-Stufen-Zeitfenster:**
@@ -49,7 +49,7 @@ Das zentrale Python-Skript orchestriert den Aggregations- und Build-Prozess:
 * **Feed-Aufbereitung:** Liest OPML-Strukturen dynamisch aus GitHub Secrets (`FEEDS_OPML`) oder einer lokalen `feeds.opml` ein.
 * **Abruf & Delta-Erkennung:** Gleicht Feeds mit dem bestehenden Datenbestand ab (`cache_meta.json`). Nur echte Unikate werden an Gemini übergeben.
 * **Parallele KI-Verarbeitung:** Chunking und parallele API-Aufrufe (`ThreadPoolExecutor`) beschleunigen die Generierung von Titeln und Zusammenfassungen.
-* **Audit-Tracking:** Speichert bei Duplikaten die Details (`merged_details` mit Quelltitel, Link und Zuordnung) für das Frontend-Inspektionsmodal.
+* **Audit-Tracking & Vererbung:** Speichert bei Duplikaten die Details (`merged_details` mit Quelltitel, Link und Zuordnung) und vererbt sie auch über mehrstufige Konsolidierungsläufe hinweg.
 * **Verschlüsselung & Export:** Serialisiert `data.json` und generiert statische Seiten (`index.html` und `archive.html`).
 * **Change-Detection:** Meldet über `$GITHUB_OUTPUT`, ob inhaltliche Änderungen vorliegen, um redundante Deployments zu verhindern.
 
@@ -71,11 +71,9 @@ Minimale Abhängigkeiten für Feed-Parsing, Krypto, HTTP-Anfragen und das Gemini
 
 ## ⚙️ Einrichtung & Konfiguration
 
-### GitHub Actions Secrets & Variables
-
 Die Konfiguration erfolgt über **Settings → Secrets and variables → Actions**:
 
-#### Secrets (Sensible Daten)
+### Secrets (Sensible Daten)
 | Secret | Beschreibung | Erforderlich |
 | :--- | :--- | :--- |
 | `GEMINI_API_KEY` | Google Gemini API-Key für Zusammenfassungen und Titel-Generierung. | Ja |
@@ -83,8 +81,8 @@ Die Konfiguration erfolgt über **Settings → Secrets and variables → Actions
 | `PAGE_PASSWORD` | Beliebiges Passwort zur AES-Verschlüsselung von `data.json`. Bleibt es leer, wird unverschlüsseltes JSON ausgeliefert. | Nein |
 | `FEED_PRIORITIES` | Optionales JSON-Mapping von Feed-Namen auf Prioritäten (z. B. `{"Heise": 5}`). | Nein |
 
-#### Variables (Deduplizierungs-Feintuning)
-Optionale Steuerung der Ähnlichkeits-Grenzwerte:
+### Variables (Optionales Deduplizierungs-Feintuning)
+Steuerung der Ähnlichkeits-Grenzwerte ohne Code-Änderung:
 
 | Variable | Standard | Beschreibung |
 | :--- | :---: | :--- |
