@@ -2,23 +2,27 @@
 
 Ein serverloser, hochperformanter News-Aggregator und Dashboard-Generator für RSS/Atom-Feeds. 
 
-Das System läuft vollständig automatisiert über **GitHub Actions**, fasst neue Artikel mithilfe der **Google Gemini API** prägnant auf Deutsch zusammen, bereinigt Duplikate quellenübergreifend und stellt ein statisches, optional **AES-verschlüsseltes Frontend** via **GitHub Pages** bereit.
+Das System läuft vollständig automatisiert über **GitHub Actions**, fasst neue Artikel mithilfe der **Google Gemini API** prägnant auf Deutsch zusammen, bereinigt Duplikate quellenübergreifend mit einstellbarer Sensitivität und stellt ein statisches, optional **AES-verschlüsseltes Frontend** via **GitHub Pages** bereit.
 
 ---
 
 ## ✨ Features
 
 - **Automatisierte Aggregation:** Ruft konfigurierte RSS/Atom-Feeds regelmäßig parallel und thread-safe ab (`HTTP 304 ETag/Last-Modified` Caching minimiert Bandbreite).
-- **Intelligente Bereinigung & Deduplizierung:** Erkennt identische Berichte aus unterschiedlichen Medien via Wortstamm- und Ähnlichkeitsabgleich. Quellen werden gebündelt angezeigt (*„Auch bei: …“*).
-- **KI-Zusammenfassung (Gemini API):** Generiert genau einen prägnanten Satz pro Meldung, hebt Schlüsselbegriffe hervor, filtert dekorative Tracker/Badges aus und übersetzt fremdsprachige Titel sachlich ins Deutsche.
-- **2-Stufen-Archivierung:**
-  - **Live-Feed (`index.html`):** Fokus auf topaktuelle Nachrichten der letzten 24 Stunden.
-  - **Archiv (`archive.html`):** Nahtlose Übergabe für Meldungen des Zeitfensters von vor 24 bis 48 Stunden.
-- **End-to-End-Verschlüsselung (Zero-Knowledge):** Die generierte Datendatei `data.json` wird bei gesetztem Passwort serverseitig via AES-CBC (OpenSSL-kompatibles Key Derivation Format) verschlüsselt. Die Entschlüsselung erfolgt clientseitig im Browser mittels Web Crypto / CryptoJS.
+- **Kontrollierbare Deduplizierung:** Erkennt identische Berichte aus unterschiedlichen Medien via Wortstamm-, Zahlen- und Ähnlichkeitsabgleich. Schwellenwerte (`DEDUP_OVERLAP`, `DEDUP_RATIO`) sind flexibel anpassbar.
+- **Dubletten-Inspektionsmodus:** Transparente Aufschlüsselung im UI-Modal. Ein Klick auf die Dubletten-Badges klappt alle verworfenen Originalartikel mit Direktlink und Zielzuordnung auf.
+- **KI-Zusammenfassung & Titel-Optimierung (Gemini API):**
+  - Sachliche, präzise deutsche Schlagzeilen (entfernt Clickbait, übersetzt englische Titel sinngemäß).
+  - Genau 1 prägnanter deutscher Satz mit **fett** hervorgehobenen Schlüsselbegriffen.
+  - Bilderkennung filtert Tracker, Logos und Badges zuverlässig heraus.
+- **2-Stufen-Zeitfenster:**
+  - **Live-Feed (`index.html`):** Fokus auf topaktuelle Meldungen der letzten 24 Stunden (`jetzt >= Zeit >= vor 24h`).
+  - **Archiv (`archive.html`):** Nahtloses Archiv für das vorangegangene Zeitfenster von vor 24 bis 48 Stunden.
+- **End-to-End-Verschlüsselung (Zero-Knowledge):** `data.json` wird bei gesetztem Passwort serverseitig via AES-CBC verschlüsselt. Die Entschlüsselung erfolgt clientseitig im Browser mittels CryptoJS.
 - **Modernes Dashboard-UI:**
-  - Vollständig responsiv (Sidebar Drawer für Smartphones/Tablets).
+  - Vollständig responsiv (Sidebar Drawer für Mobilgeräte).
   - Quellenspezifischer Filter mit Live-Dubletten-Zähler.
-  - Diagnose-Modals für Feed-Status und Dubletten-Statistiken.
+  - Diagnose-Modals für Feed-Status und zusammengeführte Artikel.
   - Tastaturnavigation (`J`/`K` Navigation, `O`/`Enter` Öffnen, `M` Gelesen-Status, `/` Suche, `[` Sidebar).
   - Manuelle Sofort-Aktualisierung über GitHub Actions Workflow Dispatch direkt aus dem UI.
 
@@ -41,21 +45,22 @@ Das System läuft vollständig automatisiert über **GitHub Actions**, fasst neu
 ## 🛠️ Dateibeschreibungen
 
 ### `build_pages.py`
-Das zentrale Python-Skript orchestriert den gesamten Aggregations- und Build-Prozess:
-* **Feed-Aufbereitung:** Liest OPML-Strukturen dynamisch aus verschlüsselten GitHub Secrets (`FEEDS_OPML`) oder einer lokalen `feeds.opml` ein.
-* **Abruf & Delta-Erkennung:** Gleicht eingehende Feeds mit dem bisherigen Datenbestand (`data.json` und `cache_meta.json`) ab. Nur echte Unikate werden an die Gemini API übergeben.
-* **Parallele KI-Verarbeitung:** Batching und parallele Abfragen (`ThreadPoolExecutor`) sorgen für minimale Laufzeiten und schonen Token-Limits.
-* **Verschlüsselung & Export:** Kompakte Serialisierung der Daten (`public/data.json`) sowie Kompilierung der statischen HTML-Views (`index.html` und `archive.html`).
-* **Change-Detection:** Gibt über `$GITHUB_OUTPUT` zurück, ob sich der Datenbestand verändert hat, um unnötige Pages-Deployments zu vermeiden.
+Das zentrale Python-Skript orchestriert den Aggregations- und Build-Prozess:
+* **Feed-Aufbereitung:** Liest OPML-Strukturen dynamisch aus GitHub Secrets (`FEEDS_OPML`) oder einer lokalen `feeds.opml` ein.
+* **Abruf & Delta-Erkennung:** Gleicht Feeds mit dem bestehenden Datenbestand ab (`cache_meta.json`). Nur echte Unikate werden an Gemini übergeben.
+* **Parallele KI-Verarbeitung:** Chunking und parallele API-Aufrufe (`ThreadPoolExecutor`) beschleunigen die Generierung von Titeln und Zusammenfassungen.
+* **Audit-Tracking:** Speichert bei Duplikaten die Details (`merged_details` mit Quelltitel, Link und Zuordnung) für das Frontend-Inspektionsmodal.
+* **Verschlüsselung & Export:** Serialisiert `data.json` und generiert statische Seiten (`index.html` und `archive.html`).
+* **Change-Detection:** Meldet über `$GITHUB_OUTPUT`, ob inhaltliche Änderungen vorliegen, um redundante Deployments zu verhindern.
 
 ### `.github/workflows/deploy.yml`
-Die CI/CD-Pipeline zur Automatisierung:
-* **Trigger:** Läuft intervallbasiert via Cron (alle 30 Minuten), manuell via `workflow_dispatch` oder bei Code-Pushes auf den `main`-Branch.
-* **Effizienz:** Nutzt Runner-Pip-Caching für sekundenschnelle Installation der Abhängigkeiten.
-* **Bereitstellung:** Schiebt die generierten Artefakte aus dem Verzeichnis `public/` isoliert auf den Branch `gh-pages`.
+Die CI/CD-Pipeline:
+* **Trigger:** Läuft alle 30 Minuten per Cron, manuell via `workflow_dispatch` oder bei Code-Pushes auf den `main`-Branch.
+* **Effizienz:** Nutzt `actions/setup-python` mit Pip-Caching für Installationszeiten unter 3 Sekunden.
+* **Bereitstellung:** Schiebt generierte Artefakte aus `public/` isoliert auf den Branch `gh-pages`.
 
 ### `requirements.txt`
-Enthält die minimal notwendigen Python-Pakete für Feed-Parsing, Krypto-Funktionen, HTTP-Anfragen und das Gemini SDK:
+Minimale Abhängigkeiten für Feed-Parsing, Krypto, HTTP-Anfragen und das Gemini SDK:
 * `feedparser`
 * `google-genai`
 * `pydantic`
@@ -66,8 +71,11 @@ Enthält die minimal notwendigen Python-Pakete für Feed-Parsing, Krypto-Funktio
 
 ## ⚙️ Einrichtung & Konfiguration
 
-Alle Zugangsdaten und Konfigurationen werden sicher über **GitHub Actions Secrets** verwaltet:
+### GitHub Actions Secrets & Variables
 
+Die Konfiguration erfolgt über **Settings → Secrets and variables → Actions**:
+
+#### Secrets (Sensible Daten)
 | Secret | Beschreibung | Erforderlich |
 | :--- | :--- | :--- |
 | `GEMINI_API_KEY` | Google Gemini API-Key für Zusammenfassungen und Titel-Generierung. | Ja |
@@ -75,15 +83,27 @@ Alle Zugangsdaten und Konfigurationen werden sicher über **GitHub Actions Secre
 | `PAGE_PASSWORD` | Beliebiges Passwort zur AES-Verschlüsselung von `data.json`. Bleibt es leer, wird unverschlüsseltes JSON ausgeliefert. | Nein |
 | `FEED_PRIORITIES` | Optionales JSON-Mapping von Feed-Namen auf Prioritäten (z. B. `{"Heise": 5}`). | Nein |
 
-### GitHub Pages Setup
+#### Variables (Deduplizierungs-Feintuning)
+Optionale Steuerung der Ähnlichkeits-Grenzwerte:
+
+| Variable | Standard | Beschreibung |
+| :--- | :---: | :--- |
+| `DEDUP_OVERLAP` | `0.50` | Benötigte Keyword-Überschneidung des kürzeren Titels (z. B. `0.60` für strengere Prüfung / weniger Zusammenfassungen). |
+| `DEDUP_RATIO` | `0.72` | Mindestwert der Zeichenketten-Ähnlichkeit via SequenceMatcher (z. B. `0.78` für nahezu identische Wortlaute). |
+
+---
+
+## 🚀 GitHub Pages Setup
+
 1. Navigiere zu **Settings → Pages** deines GitHub-Repositories.
-2. Wähle als Quelle (**Build and deployment**): `Deploy from a branch`.
+2. Wähle unter **Build and deployment** als Quelle: `Deploy from a branch`.
 3. Wähle den Branch `gh-pages` mit dem Ordner `/ (root)`.
 4. Nach dem ersten erfolgreichen Durchlauf des Actions-Workflows ist das Dashboard live erreichbar.
 
 ---
 
 ## 🔒 Datenschutz & Sicherheit
-* Das Repository speichert im Code weder Feed-URLs noch persönliche Daten oder API-Keys.
-* Die öffentliche `data.json` auf GitHub Pages enthält bei aktiviertem `PAGE_PASSWORD` ausschließlich verschlüsselte Datenblöcke.
-* Eine automatische `robots.txt` untersagt Suchmaschinen-Crawlern die Indexierung.
+
+* Das Repository enthält im Quellcode weder Feed-URLs noch persönliche Daten oder API-Keys.
+* Die öffentliche `data.json` enthält bei gesetztem `PAGE_PASSWORD` ausschließlich verschlüsselte Chiffrate.
+* Eine automatisch erzeugte `robots.txt` untersagt Suchmaschinen-Crawlern die Indexierung.
