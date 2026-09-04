@@ -34,6 +34,7 @@ Das System läuft vollständig automatisiert über **GitHub Actions**, fasst neu
 ├── build_pages.py           # Kernskript: Fetching, KI-Pipeline, Krypto & Rendering
 ├── requirements.txt         # Python-Abhängigkeiten mit Pip-Cache-Unterstützung
 └── README.md
+```
 
 ---
 
