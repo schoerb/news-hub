@@ -82,7 +82,6 @@ Lege unter **Settings → Secrets and variables → Actions** folgende Einträge
 ### 2. GitHub Actions Workflow (`.github/workflows/deploy.yml`)
 
 Der Workflow aktualisiert die Feeds tagsüber alle 30 Minuten und pausiert nachts nach deutscher Zeit (spart Kontingent).
-```
 
 ---
 
