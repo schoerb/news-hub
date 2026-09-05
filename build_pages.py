@@ -492,7 +492,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .sidebar.collapsed {
       width: 0 !important; border-right: none !important; visibility: hidden;
     }
-    .sidebar-header { padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; min-width: 290px; }
+    .sidebar-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; min-width: 290px; }
+    .sidebar-header h1 { font-size: 0.98rem; font-weight: 700; color: var(--text-bold); letter-spacing: 0.01em; }
     .close-btn { background: none; border: none; color: var(--text-muted); font-size: 1.4rem; cursor: pointer; }
     .source-list { list-style: none; padding: 12px; overflow-y: auto; flex-grow: 1; min-width: 290px; }
     .source-btn {
@@ -558,6 +559,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       .sidebar { position: fixed; inset: 0 auto 0 0; transform: translateX(-100%); box-shadow: 4px 0 24px rgba(0,0,0,0.6); }
       .sidebar.open { transform: translateX(0); visibility: visible !important; width: 290px !important; }
       .sidebar-backdrop.open { display: block; }
+      .sidebar-header h1 { font-size: 0.92rem; }
       .stream-header { padding: 12px 14px; flex-direction: column; align-items: stretch; gap: 8px; }
       .stream-header h2 { font-size: 1.1rem; white-space: normal; line-height: 1.3; }
       .header-meta-inline { font-size: 0.82rem; }
@@ -912,7 +914,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       }).join('');
     }
 
-    // Automatische Aktualisierung beim Tab-Wechsel (z. B. Smartphone entsperren)
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         updateRelativeTimes();
