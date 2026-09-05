@@ -319,7 +319,6 @@ def fetch_all_feeds(feeds, cache_meta):
                 return ([], {"title": f["title"], "status": "parse_error", "code": r.status_code})
 
             items = []
-            # OPTIMIERUNG: Nur die neuesten 15 Einträge pro Feed untersuchen
             for e in parsed.entries[:15]:
                 pub_iso = None
                 if hasattr(e, "published_parsed") and e.published_parsed:
@@ -360,7 +359,7 @@ def fetch_all_feeds(feeds, cache_meta):
     return all_items, new_cache_meta, feed_health
 
 
-# --- Deduplizierung & Stemming (Hochoptimiert) ---
+# --- Deduplizierung & Stemming ---
 def clean_stem(word: str) -> str:
     w = word.lower().strip()
     for ending in ("s", "n", "en", "er", "es", "e"):
@@ -402,7 +401,7 @@ def is_duplicate(title_a: str, title_b: str, memo_a=None, memo_b=None) -> bool:
     if min_len >= 3 and (combined_overlap / min_len) >= DEDUP_OVERLAP_THRESHOLD:
         return True
 
-    # CPU-SHORT-CIRCUITS: Spart tausende teure difflib-Berechnungen
+    # CPU-Short-Circuits
     if not common_kws and not sub_matches:
         return False
 
@@ -410,7 +409,7 @@ def is_duplicate(title_a: str, title_b: str, memo_a=None, memo_b=None) -> bool:
     if min(len_a, len_b) / max(len_a, len_b) < 0.65:
         return False
 
-    # 4. Sequenzabgleich erst bei Vor-Qualifikation
+    # 4. Sequenzabgleich
     clean_a = re.sub(r"[^\w\s]", "", title_a.lower())
     clean_b = re.sub(r"[^\w\s]", "", title_b.lower())
     return SequenceMatcher(None, clean_a, clean_b).ratio() >= DEDUP_RATIO_THRESHOLD
@@ -488,7 +487,6 @@ Artikel:
 {json.dumps(payload, ensure_ascii=False)}
 """
 
-    # 3.5-flash-lite antwortet extrem schnell bei identischer Übersetzungsgüte
     models = ["gemini-3.5-flash-lite", "gemini-3.6-flash"]
 
     for attempt in range(max_retries):
@@ -567,7 +565,6 @@ def summarize_delta_with_gemini(new_items):
     chunks = [new_items[i : i + chunk_size] for i in range(0, len(new_items), chunk_size)]
 
     all_processed = []
-    # 2 Worker parallel: Maximiert Durchsatz ohne Free-Tier Rate-Limits zu reißen
     with ThreadPoolExecutor(max_workers=2) as ex:
         futures = [ex.submit(summarize_chunk_with_gemini, client, c) for c in chunks]
         for f in futures:
@@ -581,7 +578,7 @@ def expire_old_articles(articles):
     return [a for a in articles if a.get("_ts", 0) > cutoff_ts]
 
 
-# --- UI & Layout Strings (Sticky Topbar, Mobile Bottom Bar & Seen Observer) ---
+# --- UI & Layout Strings (Auto-Hide Header, Inline Header Meta & Floating Pill) ---
 SHARED_CSS = """
     :root {
       --bg: #121418;
@@ -704,7 +701,7 @@ SHARED_CSS = """
       border-bottom: 1px solid var(--border);
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
+      align-items: center;
       min-width: 290px;
     }
     .sidebar-header h1 { font-size: 1.15rem; font-weight: 700; color: var(--text-bold); }
@@ -772,30 +769,65 @@ SHARED_CSS = """
       position: relative;
     }
 
-    /* Desktop Sticky Header */
+    /* Auto-Hide Sticky Header */
     .stream-header {
       position: sticky;
       top: 0;
       z-index: 50;
-      background: rgba(18, 20, 24, 0.82);
+      background: rgba(18, 20, 24, 0.85);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
       border-bottom: 1px solid var(--border);
-      padding: 14px 36px;
+      padding: 12px 36px;
       margin-bottom: 0;
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 16px;
+      transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .stream-header.header-hidden {
+      transform: translateY(-100%);
     }
 
     [data-theme="light"] .stream-header {
-      background: rgba(248, 250, 252, 0.85);
+      background: rgba(248, 250, 252, 0.88);
     }
 
-    .header-left { display: flex; align-items: center; gap: 12px; }
-    .header-right { display: flex; align-items: center; gap: 8px; }
-    .stream-header h2 { font-size: 1.35rem; font-weight: 700; color: var(--text-bold); }
+    .header-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+    .header-title-group {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .stream-header h2 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--text-bold);
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+
+    /* Neu: Einzeilige, kompakte Info-Leiste im Header */
+    .header-meta-inline {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .header-meta-inline::-webkit-scrollbar { display: none; }
+    .meta-sep { color: var(--border); }
+    .meta-clickable { color: var(--accent); cursor: pointer; }
+    .meta-clickable:hover { text-decoration: underline; }
 
     .theme-toggle, .menu-toggle {
       background: var(--card-bg);
@@ -829,7 +861,7 @@ SHARED_CSS = """
     .search-input:focus { border-color: var(--accent); }
 
     .cards-grid {
-      padding: 24px 36px 60px 36px;
+      padding: 22px 36px 60px 36px;
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
       gap: 18px;
@@ -857,7 +889,6 @@ SHARED_CSS = """
       box-shadow: 0 0 0 2px var(--focus-ring);
     }
 
-    /* Gesehen (gescrollt) vs. Gelesen (geklickt) */
     .feed-card.seen {
       opacity: 0.72;
     }
@@ -1092,6 +1123,35 @@ SHARED_JS = """
       }
     }
 
+    function initSmartHeader() {
+      const mainEl = document.querySelector('.main');
+      const header = document.querySelector('.stream-header');
+      if (!mainEl || !header) return;
+
+      let lastScrollTop = 0;
+      const scrollThreshold = 50;
+      const delta = 6;
+
+      mainEl.addEventListener('scroll', () => {
+        const currentScroll = mainEl.scrollTop;
+
+        if (document.activeElement === document.getElementById('search-box')) {
+          header.classList.remove('header-hidden');
+          return;
+        }
+
+        if (Math.abs(lastScrollTop - currentScroll) <= delta) return;
+
+        if (currentScroll > lastScrollTop && currentScroll > scrollThreshold) {
+          header.classList.add('header-hidden');
+        } else if (currentScroll < lastScrollTop) {
+          header.classList.remove('header-hidden');
+        }
+
+        lastScrollTop = currentScroll;
+      }, { passive: true });
+    }
+
     function getSeenArticles() {
       try { return JSON.parse(localStorage.getItem('seen_news') || '[]'); } catch(e) { return []; }
     }
@@ -1262,10 +1322,10 @@ def render_html_dashboard(feed_health=None, feeds=None):
         failed = [h for h in feed_health if not (h["status"] == "ok" or h["code"] in (200, 304))]
         health_json = json.dumps(feed_health, ensure_ascii=False)
         if ok_feeds == total_feeds:
-            health_text = f'<span style="cursor:pointer;" onclick="openHealthModal()" title="Klicken für Feed-Details">🟢 {ok_feeds}/{total_feeds} Feeds online</span>'
+            health_text = f'<span class="meta-sep">•</span><span class="meta-clickable" onclick="openHealthModal()" title="Klicken für Feed-Details">🟢 {ok_feeds}/{total_feeds} Feeds online</span>'
         else:
             failed_names = ", ".join(f["title"] for f in failed[:2])
-            health_text = f'<span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: {failed_names}">🟡 {ok_feeds}/{total_feeds} Feeds ({len(failed)} gestört) ℹ️</span>'
+            health_text = f'<span class="meta-sep">•</span><span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: {failed_names}">🟡 {ok_feeds}/{total_feeds} Feeds ({len(failed)} gestört) ℹ️</span>'
 
     all_source_names = [f["title"] for f in (feeds or [])]
     all_sources_json = json.dumps(all_source_names, ensure_ascii=False)
@@ -1334,14 +1394,7 @@ def render_html_dashboard(feed_health=None, feeds=None):
 
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-      <div>
-        <h1>⚡ News-Hub</h1>
-        <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
-          Stand: __NOW_STR__<br>
-          <span style="color: var(--accent); cursor: pointer;" id="sidebar-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
-          __HEALTH_BLOCK__
-        </p>
-      </div>
+      <h1>⚡ News-Hub</h1>
       <button class="close-btn" onclick="toggleSidebar()">&times;</button>
     </div>
     <ul class="source-list" id="source-list">
@@ -1363,7 +1416,15 @@ def render_html_dashboard(feed_health=None, feeds=None):
     <div class="stream-header">
       <div class="header-left">
         <button class="menu-toggle" onclick="toggleSidebar()" title="Menü ein-/ausblenden (Taste: [)">☰</button>
-        <h2 id="current-title">Alle Meldungen</h2>
+        <div class="header-title-group">
+          <h2 id="current-title">Alle Meldungen</h2>
+          <div class="header-meta-inline">
+            <span>Stand: __NOW_STR__</span>
+            <span class="meta-sep">•</span>
+            <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
+            __HEALTH_BLOCK__
+          </div>
+        </div>
       </div>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Artikel durchsuchen..." oninput="filterSearch(this.value)">
@@ -1486,6 +1547,7 @@ def render_html_dashboard(feed_health=None, feeds=None):
       renderUI(liveArticles);
       initReadState();
       initSeenObserver();
+      initSmartHeader();
       updateRelativeTimes();
       initSidebarState();
     }
@@ -1505,8 +1567,8 @@ def render_html_dashboard(feed_health=None, feeds=None):
       });
 
       document.getElementById('current-title').textContent = `Alle Meldungen (${articles.length})`;
-      const sidebarDupInfo = document.getElementById('sidebar-dup-info');
-      if (sidebarDupInfo) sidebarDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
+      const headerDupInfo = document.getElementById('header-dup-info');
+      if (headerDupInfo) headerDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
 
       const knownSources = new Set([...configuredSources, ...Object.keys(allSourceCounts)]);
       const sortedSources = Array.from(knownSources).sort((a, b) => {
@@ -1677,12 +1739,11 @@ def render_html_dashboard(feed_health=None, feeds=None):
 </body>
 </html>
 """
-    health_replacement = f"<br>{health_text}" if health_text else ""
     return template.replace("__SHARED_CSS__", SHARED_CSS)\
                    .replace("__SHARED_MODALS__", SHARED_MODALS)\
                    .replace("__SHARED_JS__", SHARED_JS)\
                    .replace("__NOW_STR__", now_str)\
-                   .replace("__HEALTH_BLOCK__", health_replacement)\
+                   .replace("__HEALTH_BLOCK__", health_text)\
                    .replace("__HEALTH_DATA__", health_json)\
                    .replace("__CONFIGURED_SOURCES__", all_sources_json)
 
@@ -1697,10 +1758,10 @@ def render_archive_html(feed_health=None, feeds=None):
         failed = [h for h in feed_health if not (h["status"] == "ok" or h["code"] in (200, 304))]
         health_json = json.dumps(feed_health, ensure_ascii=False)
         if ok_feeds == total_feeds:
-            health_text = f'<span style="cursor:pointer;" onclick="openHealthModal()" title="Klicken für Feed-Details">🟢 {ok_feeds}/{total_feeds} Feeds online</span>'
+            health_text = f'<span class="meta-sep">•</span><span class="meta-clickable" onclick="openHealthModal()" title="Klicken für Feed-Details">🟢 {ok_feeds}/{total_feeds} Feeds online</span>'
         else:
             failed_names = ", ".join(f["title"] for f in failed[:2])
-            health_text = f'<span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: {failed_names}">🟡 {ok_feeds}/{total_feeds} Feeds ({len(failed)} gestört) ℹ️</span>'
+            health_text = f'<span class="meta-sep">•</span><span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: {failed_names}">🟡 {ok_feeds}/{total_feeds} Feeds ({len(failed)} gestört) ℹ️</span>'
 
     all_source_names = [f["title"] for f in (feeds or [])]
     all_sources_json = json.dumps(all_source_names, ensure_ascii=False)
@@ -1729,14 +1790,7 @@ def render_archive_html(feed_health=None, feeds=None):
 
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-      <div>
-        <h1>⚡ Archiv (24–48h)</h1>
-        <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
-          Stand: __NOW_STR__<br>
-          <span style="color: var(--accent); cursor: pointer;" id="sidebar-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
-          __HEALTH_BLOCK__
-        </p>
-      </div>
+      <h1>⚡ Archiv (24–48h)</h1>
       <button class="close-btn" onclick="toggleSidebar()">&times;</button>
     </div>
     <ul class="source-list" id="source-list">
@@ -1756,7 +1810,15 @@ def render_archive_html(feed_health=None, feeds=None):
     <div class="stream-header">
       <div class="header-left">
         <button class="menu-toggle" onclick="toggleSidebar()" title="Menü ein-/ausblenden (Taste: [)">☰</button>
-        <h2 id="current-title">Archiv</h2>
+        <div class="header-title-group">
+          <h2 id="current-title">Archiv</h2>
+          <div class="header-meta-inline">
+            <span>Stand: __NOW_STR__</span>
+            <span class="meta-sep">•</span>
+            <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
+            __HEALTH_BLOCK__
+          </div>
+        </div>
       </div>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Archiv durchsuchen..." oninput="filterSearch(this.value)">
@@ -1821,6 +1883,7 @@ def render_archive_html(feed_health=None, feeds=None):
       activeArticlesCollection = archiveArticles;
       renderArchiveUI();
       initSeenObserver();
+      initSmartHeader();
     }
 
     function renderArchiveUI() {
@@ -1838,8 +1901,8 @@ def render_archive_html(feed_health=None, feeds=None):
       });
 
       document.getElementById('current-title').textContent = `Archiv (${archiveArticles.length})`;
-      const sidebarDupInfo = document.getElementById('sidebar-dup-info');
-      if (sidebarDupInfo) sidebarDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
+      const headerDupInfo = document.getElementById('header-dup-info');
+      if (headerDupInfo) headerDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
 
       const knownSources = new Set([...configuredSources, ...Object.keys(allSourceCounts)]);
       const sortedSources = Array.from(knownSources).sort((a, b) => {
@@ -1929,12 +1992,11 @@ def render_archive_html(feed_health=None, feeds=None):
 </body>
 </html>
 """
-    health_replacement = f"<br>{health_text}" if health_text else ""
     return template.replace("__SHARED_CSS__", SHARED_CSS)\
                    .replace("__SHARED_MODALS__", SHARED_MODALS)\
                    .replace("__SHARED_JS__", SHARED_JS)\
                    .replace("__NOW_STR__", now_str)\
-                   .replace("__HEALTH_BLOCK__", health_replacement)\
+                   .replace("__HEALTH_BLOCK__", health_text)\
                    .replace("__HEALTH_DATA__", health_json)\
                    .replace("__CONFIGURED_SOURCES__", all_sources_json)
 
@@ -1948,7 +2010,7 @@ if __name__ == "__main__":
     cached_articles = expire_old_articles(cached_articles)
     feeds = parse_opml()
 
-    # 2. Feeds abrufen (Thread-Safe & Timeout 8s)
+    # 2. Feeds abrufen
     raw_feed_items, updated_cache_meta, feed_health = fetch_all_feeds(feeds, cache_meta)
     with open("cache_meta.json", "w", encoding="utf-8") as f:
         json.dump(updated_cache_meta, f, separators=(',', ':'))
@@ -1980,7 +2042,7 @@ if __name__ == "__main__":
     # 4. Batch-Deduplizierung
     bundled_new = consolidate_articles(truly_new_items)
 
-    # 5. Echte Unikate an Gemini senden (Parallele 2-Worker-Verarbeitung mit 3.5-flash-lite)
+    # 5. Echte Unikate an Gemini senden (2 Worker parallel mit 3.5-flash-lite)
     if bundled_new:
         processed_new = summarize_delta_with_gemini(bundled_new)
         combined_articles = processed_new + cached_articles
