@@ -447,6 +447,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>__PAGE_TITLE__</title>
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#121418">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
   <style>
@@ -530,7 +534,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       padding: 8px 14px; border-radius: 6px; font-size: 0.85rem; outline: none; width: 240px;
     }
 
-    .cards-grid { padding: 20px 36px 60px; display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
+    .cards-grid { padding: 20px 36px calc(60px + env(safe-area-inset-bottom, 0px)); display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
     .feed-card {
       background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px;
       display: flex; flex-direction: column; justify-content: space-between; transition: transform 0.15s, opacity 0.25s;
@@ -559,16 +563,17 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       .header-meta-inline { font-size: 0.82rem; }
       .stream-header .menu-toggle, .stream-header .theme-toggle, .stream-header #refresh-btn { display: none !important; }
       .header-right, .search-input { width: 100%; }
-      .cards-grid { grid-template-columns: 1fr; gap: 12px; padding: 12px 12px 90px; }
+      .cards-grid { grid-template-columns: 1fr; gap: 12px; padding: 12px 12px calc(96px + env(safe-area-inset-bottom, 0px)); }
       .mobile-bottom-bar {
-        display: flex; position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+        display: flex; position: fixed; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%);
         background: rgba(26, 30, 36, 0.55); border: 1px solid var(--border); backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px); border-radius: 36px; padding: 6px 12px; gap: 10px; z-index: 105;
+        -webkit-backdrop-filter: blur(16px); border-radius: 40px; padding: 6px 14px; gap: 12px; z-index: 105;
         transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s;
       }
-      .mobile-bottom-bar.bar-hidden { transform: translate(-50%, 120%); opacity: 0; pointer-events: none; }
+      .mobile-bottom-bar.bar-hidden { transform: translate(-50%, 140%); opacity: 0; pointer-events: none; }
       [data-theme="light"] .mobile-bottom-bar { background: rgba(255, 255, 255, 0.65); }
-      .bottom-btn { background: transparent; border: none; color: var(--text); font-size: 1.15rem; width: 42px; height: 42px; border-radius: 50%; }
+      .bottom-btn { background: transparent; border: none; color: var(--text); font-size: 1.25rem; width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+      .bottom-btn:active { transform: scale(0.92); background: var(--accent-dim); }
     }
   </style>
 </head>
@@ -653,6 +658,17 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if (diff < 3600) return `• vor ${Math.floor(diff / 60)}m`;
       if (diff < 86400) return `• vor ${Math.floor(diff / 3600)}h`;
       return `• vor ${Math.floor(diff / 86400)}d`;
+    }
+
+    function updateRelativeTimes() {
+      document.querySelectorAll('.feed-card').forEach(card => {
+        const id = card.dataset.id;
+        const art = liveArticles.find(a => String(hashString(a.link)) === String(id));
+        if (art && art.published) {
+          const timeEl = card.querySelector('.feed-time');
+          if (timeEl) timeEl.textContent = formatRelativeTime(art.published);
+        }
+      });
     }
 
     function initTheme() {
@@ -874,7 +890,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       initSeenObserver();
       initSmartHeader();
 
-      // Duplikate Modal Liste
       const dupMap = {};
       liveArticles.forEach(a => (a.merged_details || []).forEach(m => {
         dupMap[m.source] = dupMap[m.source] || [];
@@ -884,7 +899,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         <div class="modal-row"><span style="font-weight:600">${escapeHtml(src)}</span><span class="badge">${items.length}</span></div>
       `).join('') || '<p style="color:var(--text-muted); padding:10px 0;">Keine Dubletten vorhanden.</p>';
 
-      // Health Modal Liste mit genauen Status-Codes
       document.getElementById('health-list').innerHTML = feedHealthData.map(f => {
         const isOk = f.status === 'ok' || f.code === 304 || f.code === 200;
         const icon = isOk ? '🟢' : '🔴';
@@ -897,6 +911,31 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         `;
       }).join('');
     }
+
+    // Automatische Aktualisierung beim Tab-Wechsel (z. B. Smartphone entsperren)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        updateRelativeTimes();
+        fetch('data.json')
+          .then(r => r.text())
+          .then(txt => {
+            if (txt && txt !== rawEncryptedData) {
+              rawEncryptedData = txt;
+              const pw = localStorage.getItem('hub_key');
+              if (rawEncryptedData.trim().startsWith('[')) {
+                globalArticles = JSON.parse(rawEncryptedData);
+                onReady();
+              } else if (pw) {
+                try {
+                  globalArticles = JSON.parse(CryptoJS.AES.decrypt(rawEncryptedData, pw).toString(CryptoJS.enc.Utf8));
+                  onReady();
+                } catch(e) {}
+              }
+            }
+          })
+          .catch(() => {});
+      }
+    });
 
     document.addEventListener('keydown', (e) => {
       if (document.activeElement === document.getElementById('search-box')) return;
