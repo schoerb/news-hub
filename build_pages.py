@@ -383,11 +383,9 @@ def is_duplicate(title_a: str, title_b: str, memo_a=None, memo_b=None) -> bool:
     common_nums = num_a & num_b
     common_kws = kw_a & kw_b
 
-    # 1. Zahlen-Regel
     if common_nums and len(common_kws) >= 2:
         return True
 
-    # 2. Präfix-Matching erst ab 5 Zeichen
     sub_matches = set()
     for wa in kw_a:
         for wb in kw_b:
@@ -397,11 +395,9 @@ def is_duplicate(title_a: str, title_b: str, memo_a=None, memo_b=None) -> bool:
     combined_overlap = len(common_kws | sub_matches)
     min_len = min(len(kw_a), len(kw_b))
 
-    # 3. Kontrollierte Wortüberdeckung
     if min_len >= 3 and (combined_overlap / min_len) >= DEDUP_OVERLAP_THRESHOLD:
         return True
 
-    # CPU-Short-Circuits
     if not common_kws and not sub_matches:
         return False
 
@@ -409,7 +405,6 @@ def is_duplicate(title_a: str, title_b: str, memo_a=None, memo_b=None) -> bool:
     if min(len_a, len_b) / max(len_a, len_b) < 0.65:
         return False
 
-    # 4. Sequenzabgleich
     clean_a = re.sub(r"[^\w\s]", "", title_a.lower())
     clean_b = re.sub(r"[^\w\s]", "", title_b.lower())
     return SequenceMatcher(None, clean_a, clean_b).ratio() >= DEDUP_RATIO_THRESHOLD
@@ -578,7 +573,7 @@ def expire_old_articles(articles):
     return [a for a in articles if a.get("_ts", 0) > cutoff_ts]
 
 
-# --- UI & Layout Strings (Auto-Hide Header, Inline Header Meta & Floating Pill) ---
+# --- UI & Layout Strings (Erhöhte Transparenz / Glassmorphism) ---
 SHARED_CSS = """
     :root {
       --bg: #121418;
@@ -769,14 +764,14 @@ SHARED_CSS = """
       position: relative;
     }
 
-    /* Auto-Hide Sticky Header */
+    /* Auto-Hide Sticky Header mit hoher Transparenz */
     .stream-header {
       position: sticky;
       top: 0;
       z-index: 50;
-      background: rgba(18, 20, 24, 0.85);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
+      background: rgba(18, 20, 24, 0.55);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--border);
       padding: 12px 36px;
       margin-bottom: 0;
@@ -792,7 +787,7 @@ SHARED_CSS = """
     }
 
     [data-theme="light"] .stream-header {
-      background: rgba(248, 250, 252, 0.88);
+      background: rgba(248, 250, 252, 0.65);
     }
 
     .header-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
@@ -801,19 +796,18 @@ SHARED_CSS = """
     .header-title-group {
       display: flex;
       flex-direction: column;
-      gap: 2px;
+      gap: 3px;
       min-width: 0;
     }
 
     .stream-header h2 {
-      font-size: 1.25rem;
+      font-size: 1.15rem;
       font-weight: 700;
       color: var(--text-bold);
-      line-height: 1.2;
+      line-height: 1.3;
       white-space: nowrap;
     }
 
-    /* Neu: Einzeilige, kompakte Info-Leiste im Header */
     .header-meta-inline {
       display: flex;
       align-items: center;
@@ -861,7 +855,7 @@ SHARED_CSS = """
     .search-input:focus { border-color: var(--accent); }
 
     .cards-grid {
-      padding: 22px 36px 60px 36px;
+      padding: 20px 36px 60px 36px;
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
       gap: 18px;
@@ -961,7 +955,14 @@ SHARED_CSS = """
         align-items: stretch;
         gap: 8px;
       }
-      .stream-header h2 { font-size: 1.15rem; }
+      .stream-header h2 {
+        font-size: 0.95rem;
+        white-space: normal;
+        line-height: 1.25;
+      }
+      .header-meta-inline {
+        font-size: 0.72rem;
+      }
       
       .stream-header .menu-toggle,
       .stream-header .theme-toggle,
@@ -975,32 +976,40 @@ SHARED_CSS = """
       .cards-grid {
         grid-template-columns: 1fr;
         gap: 12px;
-        padding: 14px 12px 90px 12px;
+        padding: 12px 12px 90px 12px;
       }
       .feed-card { padding: 14px; }
       .feed-thumb { height: 150px; }
       .shortcuts-hint { display: none; }
 
+      /* Schwebende Daumen-Kapsel mit hoher Transparenz */
       .mobile-bottom-bar {
         display: flex;
         position: fixed;
         bottom: 18px;
         left: 50%;
         transform: translateX(-50%);
-        background: rgba(26, 30, 36, 0.92);
+        background: rgba(26, 30, 36, 0.55);
         border: 1px solid var(--border);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
         border-radius: 36px;
         padding: 6px 12px;
         gap: 10px;
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
         z-index: 105;
+        transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease;
+      }
+
+      .mobile-bottom-bar.bar-hidden {
+        transform: translate(-50%, 120%);
+        opacity: 0;
+        pointer-events: none;
       }
 
       [data-theme="light"] .mobile-bottom-bar {
-        background: rgba(255, 255, 255, 0.92);
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+        background: rgba(255, 255, 255, 0.65);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
       }
 
       .bottom-btn {
@@ -1126,6 +1135,7 @@ SHARED_JS = """
     function initSmartHeader() {
       const mainEl = document.querySelector('.main');
       const header = document.querySelector('.stream-header');
+      const bottomBar = document.querySelector('.mobile-bottom-bar');
       if (!mainEl || !header) return;
 
       let lastScrollTop = 0;
@@ -1137,6 +1147,7 @@ SHARED_JS = """
 
         if (document.activeElement === document.getElementById('search-box')) {
           header.classList.remove('header-hidden');
+          if (bottomBar) bottomBar.classList.remove('bar-hidden');
           return;
         }
 
@@ -1144,8 +1155,16 @@ SHARED_JS = """
 
         if (currentScroll > lastScrollTop && currentScroll > scrollThreshold) {
           header.classList.add('header-hidden');
+          if (bottomBar) bottomBar.classList.remove('bar-hidden');
         } else if (currentScroll < lastScrollTop) {
           header.classList.remove('header-hidden');
+          if (bottomBar) {
+            if (currentScroll <= 30) {
+              bottomBar.classList.remove('bar-hidden');
+            } else {
+              bottomBar.classList.add('bar-hidden');
+            }
+          }
         }
 
         lastScrollTop = currentScroll;
@@ -1313,7 +1332,7 @@ SHARED_JS = """
 
 
 def render_html_dashboard(feed_health=None, feeds=None):
-    now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y, %H:%M Uhr")
+    now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y, %H:%M")
     health_text = ""
     health_json = "[]"
     if feed_health:
@@ -1419,8 +1438,6 @@ def render_html_dashboard(feed_health=None, feeds=None):
         <div class="header-title-group">
           <h2 id="current-title">Alle Meldungen</h2>
           <div class="header-meta-inline">
-            <span>Stand: __NOW_STR__</span>
-            <span class="meta-sep">•</span>
             <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
             __HEALTH_BLOCK__
           </div>
@@ -1451,6 +1468,7 @@ def render_html_dashboard(feed_health=None, feeds=None):
     let allSourceCounts = {};
     const configuredSources = __CONFIGURED_SOURCES__;
     const feedHealthData = __HEALTH_DATA__;
+    const buildTimestampStr = "__NOW_STR__";
 
     __SHARED_JS__
 
@@ -1566,7 +1584,8 @@ def render_html_dashboard(feed_health=None, feeds=None):
         allSourceCounts[s] = (allSourceCounts[s] || 0) + 1;
       });
 
-      document.getElementById('current-title').textContent = `Alle Meldungen (${articles.length})`;
+      document.getElementById('current-title').textContent = `Alle ${articles.length} Meldungen bis ${buildTimestampStr}`;
+
       const headerDupInfo = document.getElementById('header-dup-info');
       if (headerDupInfo) headerDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
 
@@ -1672,8 +1691,8 @@ def render_html_dashboard(feed_health=None, feeds=None):
       btn.classList.add('active');
 
       document.getElementById('current-title').textContent = (source === 'all')
-        ? `Alle Meldungen (${liveArticles.length})`
-        : `${source} (${allSourceCounts[source] || 0})`;
+        ? `Alle ${liveArticles.length} Meldungen bis ${buildTimestampStr}`
+        : `${source} (${allSourceCounts[source] || 0}) bis ${buildTimestampStr}`;
 
       applyCombinedFilters();
       if (window.innerWidth <= 768) toggleSidebar();
@@ -1749,7 +1768,7 @@ def render_html_dashboard(feed_health=None, feeds=None):
 
 
 def render_archive_html(feed_health=None, feeds=None):
-    now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y, %H:%M Uhr")
+    now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y, %H:%M")
     health_text = ""
     health_json = "[]"
     if feed_health:
@@ -1813,8 +1832,6 @@ def render_archive_html(feed_health=None, feeds=None):
         <div class="header-title-group">
           <h2 id="current-title">Archiv</h2>
           <div class="header-meta-inline">
-            <span>Stand: __NOW_STR__</span>
-            <span class="meta-sep">•</span>
             <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
             __HEALTH_BLOCK__
           </div>
@@ -1841,6 +1858,7 @@ def render_archive_html(feed_health=None, feeds=None):
     let allSourceCounts = {};
     const configuredSources = __CONFIGURED_SOURCES__;
     const feedHealthData = __HEALTH_DATA__;
+    const buildTimestampStr = "__NOW_STR__";
 
     __SHARED_JS__
 
@@ -1900,7 +1918,7 @@ def render_archive_html(feed_health=None, feeds=None):
         allSourceCounts[s] = (allSourceCounts[s] || 0) + 1;
       });
 
-      document.getElementById('current-title').textContent = `Archiv (${archiveArticles.length})`;
+      document.getElementById('current-title').textContent = `Archiv (${archiveArticles.length} Meldungen bis ${buildTimestampStr})`;
       const headerDupInfo = document.getElementById('header-dup-info');
       if (headerDupInfo) headerDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
 
@@ -1955,8 +1973,8 @@ def render_archive_html(feed_health=None, feeds=None):
       btn.classList.add('active');
 
       document.getElementById('current-title').textContent = (source === 'all')
-        ? `Archiv (${archiveArticles.length})`
-        : `${source} (${allSourceCounts[source] || 0})`;
+        ? `Archiv (${archiveArticles.length} Meldungen bis ${buildTimestampStr})`
+        : `${source} (${allSourceCounts[source] || 0} bis ${buildTimestampStr})`;
 
       applyCombinedFilters();
       if (window.innerWidth <= 768) toggleSidebar();
@@ -1982,7 +2000,7 @@ def render_archive_html(feed_health=None, feeds=None):
         if (e.key === 'Escape') document.getElementById('search-box').blur();
         return;
       }
-      if (e.key === '[') { e.preventDefault(); toggleSidebar(); }
+      if (e.key === '[') { e.preventDefault(); toggleSidebar(); return; }
       else if (e.key === 'Escape') { closeHealthModal(); closeDuplicateModal(); }
       else if (e.key === '/') { e.preventDefault(); focusSearch(); }
     });
