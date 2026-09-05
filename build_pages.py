@@ -571,7 +571,7 @@ def expire_old_articles(articles):
     return [a for a in articles if a.get("_ts", 0) > cutoff_ts]
 
 
-# --- UI & Layout Strings (Sticky Topbar & Mobile Bottom Bar) ---
+# --- UI & Layout Strings (Sticky Topbar, Mobile Bottom Bar & Seen Observer) ---
 SHARED_CSS = """
     :root {
       --bg: #121418;
@@ -834,7 +834,7 @@ SHARED_CSS = """
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      transition: transform 0.15s ease, border-color 0.15s ease, opacity 0.2s, box-shadow 0.15s ease;
+      transition: transform 0.15s ease, border-color 0.15s ease, opacity 0.25s ease, box-shadow 0.15s ease;
       outline: none;
     }
     .feed-card:hover {
@@ -846,8 +846,17 @@ SHARED_CSS = """
       border-color: var(--focus-ring);
       box-shadow: 0 0 0 2px var(--focus-ring);
     }
-    .feed-card.read { opacity: 0.4; }
-    .feed-card.read .feed-title { color: var(--text-muted); }
+
+    /* Gesehen (gescrollt) vs. Gelesen (geklickt) */
+    .feed-card.seen {
+      opacity: 0.72;
+    }
+    .feed-card.read {
+      opacity: 0.35 !important;
+    }
+    .feed-card.read .feed-title {
+      color: var(--text-muted) !important;
+    }
 
     .feed-content { display: flex; flex-direction: column; flex-grow: 1; }
     .feed-meta {
@@ -889,7 +898,6 @@ SHARED_CSS = """
       background: var(--border);
     }
 
-    /* Auf Desktop ausgeblendet */
     .mobile-bottom-bar {
       display: none;
     }
@@ -914,7 +922,6 @@ SHARED_CSS = """
       }
       .stream-header h2 { font-size: 1.15rem; }
       
-      /* Oben Platz sparen: Desktop-Buttons auf Mobile ausblenden */
       .stream-header .menu-toggle,
       .stream-header .theme-toggle,
       .stream-header #refresh-btn {
@@ -927,13 +934,12 @@ SHARED_CSS = """
       .cards-grid {
         grid-template-columns: 1fr;
         gap: 12px;
-        padding: 14px 12px 90px 12px; /* Puffer unten für schwebende Leiste */
+        padding: 14px 12px 90px 12px;
       }
       .feed-card { padding: 14px; }
       .feed-thumb { height: 150px; }
       .shortcuts-hint { display: none; }
 
-      /* Schwebende Daumen-Kapsel */
       .mobile-bottom-bar {
         display: flex;
         position: fixed;
@@ -1074,6 +1080,61 @@ SHARED_JS = """
         sb.focus();
         sb.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
+    }
+
+    // --- Gesehen-Status (Scroll-Erkennung via IntersectionObserver) ---
+    function getSeenArticles() {
+      try { return JSON.parse(localStorage.getItem('seen_news') || '[]'); } catch(e) { return []; }
+    }
+
+    function markAsSeen(id) {
+      let seen = getSeenArticles();
+      if (!seen.includes(id)) {
+        seen.push(id);
+        if (seen.length > 500) seen = seen.slice(-500);
+        localStorage.setItem('seen_news', JSON.stringify(seen));
+      }
+      const el = document.querySelector(`.feed-card[data-id="${id}"]`);
+      if (el) el.classList.add('seen');
+    }
+
+    function initSeenObserver() {
+      const seen = getSeenArticles();
+      seen.forEach(id => {
+        const el = document.querySelector(`.feed-card[data-id="${id}"]`);
+        if (el) el.classList.add('seen');
+      });
+
+      const visibleTimers = new Map();
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          const id = entry.target.dataset.id;
+          if (!id) return;
+
+          if (entry.isIntersecting) {
+            const timer = setTimeout(() => {
+              markAsSeen(id);
+              observer.unobserve(entry.target);
+              visibleTimers.delete(id);
+            }, 1000);
+            visibleTimers.set(id, timer);
+          } else {
+            if (visibleTimers.has(id)) {
+              clearTimeout(visibleTimers.get(id));
+              visibleTimers.delete(id);
+            }
+          }
+        });
+      }, {
+        root: document.querySelector('.main'),
+        threshold: 0.6
+      });
+
+      document.querySelectorAll('.feed-card').forEach(card => {
+        if (!card.classList.contains('seen')) {
+          observer.observe(card);
+        }
+      });
     }
 
     function openHealthModal() {
@@ -1415,6 +1476,7 @@ def render_html_dashboard(feed_health=None, feeds=None):
       activeArticlesCollection = liveArticles;
       renderUI(liveArticles);
       initReadState();
+      initSeenObserver();
       updateRelativeTimes();
       initSidebarState();
     }
@@ -1749,6 +1811,7 @@ def render_archive_html(feed_health=None, feeds=None):
 
       activeArticlesCollection = archiveArticles;
       renderArchiveUI();
+      initSeenObserver();
     }
 
     function renderArchiveUI() {
