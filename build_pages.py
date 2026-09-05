@@ -109,7 +109,7 @@ def get_private_priorities() -> dict:
 # --- Pydantic Schemas ---
 class DeltaItem(BaseModel):
     id: int = Field(description="Index des Artikels aus dem Batch")
-    german_title: str = Field(description="Zwingend auf DEUTSCH. Englische Titel vollständig und sinngemäß ins Deutsche übersetzen. Kein Clickbait!")
+    german_title: str = Field(description="Zwingend auf DEUTSCH. Englische Titel vollständig und sinngemäß ins Deutsche übersetzen. Kein Clickbait! Konkretes Modell/Zahl/Fehler nennen.")
     summary: str = Field(description="Genau 1 prägnanter deutscher Satz. Schlüsselbegriffe mit **fett** hervorheben.")
     use_image: bool = Field(default=False, description="True NUR wenn das Bild ein konkretes Gerät, UI-Element oder Chart zeigt.")
 
@@ -481,12 +481,16 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 90; }
     .sidebar {
       width: 290px; background: var(--sidebar-bg); border-right: 1px solid var(--border);
-      display: flex; flex-direction: column; flex-shrink: 0; z-index: 100; transition: width 0.25s ease, transform 0.25s ease;
+      display: flex; flex-direction: column; flex-shrink: 0; z-index: 100;
+      transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden; white-space: nowrap;
     }
-    .sidebar.collapsed { width: 0; border-right: none; }
-    .sidebar-header { padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .sidebar.collapsed {
+      width: 0 !important; border-right: none !important; visibility: hidden;
+    }
+    .sidebar-header { padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; min-width: 290px; }
     .close-btn { background: none; border: none; color: var(--text-muted); font-size: 1.4rem; cursor: pointer; }
-    .source-list { list-style: none; padding: 12px; overflow-y: auto; flex-grow: 1; }
+    .source-list { list-style: none; padding: 12px; overflow-y: auto; flex-grow: 1; min-width: 290px; }
     .source-btn {
       width: 100%; text-align: left; padding: 10px 14px; margin-bottom: 4px; border-radius: 6px;
       background: transparent; border: none; color: var(--text-muted); font-size: 0.85rem; font-weight: 500;
@@ -495,7 +499,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .source-btn:hover, .source-btn.active { background: var(--accent-dim); color: var(--accent); font-weight: 600; }
     .badge { background: var(--border); padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; color: var(--text); }
     .source-btn.active .badge { background: var(--accent); color: #fff; }
-    .sidebar-footer { padding: 16px; border-top: 1px solid var(--border); }
+    .sidebar-footer { padding: 16px; border-top: 1px solid var(--border); min-width: 290px; }
     .nav-link-btn { display: block; text-align: center; color: var(--accent); text-decoration: none; font-size: 0.82rem; font-weight: 600; padding: 8px; border-radius: 6px; background: var(--accent-dim); margin-bottom: 8px; }
     .mark-all-btn { width: 100%; background: var(--border); color: var(--text); border: none; padding: 8px 12px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; }
 
@@ -503,16 +507,16 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .stream-header {
       position: sticky; top: 0; z-index: 50; background: rgba(18, 20, 24, 0.55);
       backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid var(--border);
-      padding: 12px 36px; display: flex; justify-content: space-between; align-items: center; gap: 16px;
+      padding: 14px 36px; display: flex; justify-content: space-between; align-items: center; gap: 16px;
       transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .stream-header.header-hidden { transform: translateY(-100%); }
     [data-theme="light"] .stream-header { background: rgba(248, 250, 252, 0.65); }
     .header-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
     .header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-    .header-title-group { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-    .stream-header h2 { font-size: 1.15rem; font-weight: 700; color: var(--text-bold); white-space: nowrap; }
-    .header-meta-inline { display: flex; align-items: center; gap: 6px; font-size: 0.74rem; color: var(--text-muted); white-space: nowrap; }
+    .header-title-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .stream-header h2 { font-size: 1.3rem; font-weight: 700; color: var(--text-bold); white-space: nowrap; line-height: 1.25; }
+    .header-meta-inline { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-muted); white-space: nowrap; }
     .meta-sep { color: var(--border); }
     .meta-clickable { color: var(--accent); cursor: pointer; }
     .meta-clickable:hover { text-decoration: underline; }
@@ -548,10 +552,11 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .mobile-bottom-bar { display: none; }
     @media (max-width: 768px) {
       .sidebar { position: fixed; inset: 0 auto 0 0; transform: translateX(-100%); box-shadow: 4px 0 24px rgba(0,0,0,0.6); }
-      .sidebar.open { transform: translateX(0); }
+      .sidebar.open { transform: translateX(0); visibility: visible !important; width: 290px !important; }
       .sidebar-backdrop.open { display: block; }
-      .stream-header { padding: 10px 14px; flex-direction: column; align-items: stretch; gap: 8px; }
-      .stream-header h2 { font-size: 0.95rem; white-space: normal; }
+      .stream-header { padding: 12px 14px; flex-direction: column; align-items: stretch; gap: 8px; }
+      .stream-header h2 { font-size: 1.1rem; white-space: normal; line-height: 1.3; }
+      .header-meta-inline { font-size: 0.82rem; }
       .stream-header .menu-toggle, .stream-header .theme-toggle, .stream-header #refresh-btn { display: none !important; }
       .header-right, .search-input { width: 100%; }
       .cards-grid { grid-template-columns: 1fr; gap: 12px; padding: 12px 12px 90px; }
@@ -660,6 +665,14 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       localStorage.setItem('hub_theme', next);
     }
 
+    function initSidebarState() {
+      if (window.innerWidth > 768) {
+        if (localStorage.getItem('sidebar_closed') === 'true') {
+          document.getElementById('sidebar').classList.add('collapsed');
+        }
+      }
+    }
+
     function toggleSidebar() {
       const sb = document.getElementById('sidebar');
       if (window.innerWidth <= 768) {
@@ -667,6 +680,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         document.getElementById('backdrop').classList.toggle('open');
       } else {
         sb.classList.toggle('collapsed');
+        localStorage.setItem('sidebar_closed', sb.classList.contains('collapsed'));
       }
     }
     function focusSearch() { const el = document.getElementById('search-box'); if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth' }); } }
@@ -816,6 +830,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     async function init() {
       initTheme();
+      initSidebarState();
       try {
         const r = await fetch('data.json');
         rawEncryptedData = await r.text();
@@ -859,7 +874,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       initSeenObserver();
       initSmartHeader();
 
-      // Duplikate Modal Liste aufbauen
+      // Duplikate Modal Liste
       const dupMap = {};
       liveArticles.forEach(a => (a.merged_details || []).forEach(m => {
         dupMap[m.source] = dupMap[m.source] || [];
@@ -869,10 +884,18 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         <div class="modal-row"><span style="font-weight:600">${escapeHtml(src)}</span><span class="badge">${items.length}</span></div>
       `).join('') || '<p style="color:var(--text-muted); padding:10px 0;">Keine Dubletten vorhanden.</p>';
 
-      // Health Modal Liste
-      document.getElementById('health-list').innerHTML = feedHealthData.map(f => `
-        <div class="modal-row"><span>${f.status === 'ok' || f.code === 304 ? '🟢' : '🔴'} ${escapeHtml(f.title)}</span><span style="font-family:monospace; font-size:0.8rem">${f.code}</span></div>
-      `).join('');
+      // Health Modal Liste mit genauen Status-Codes
+      document.getElementById('health-list').innerHTML = feedHealthData.map(f => {
+        const isOk = f.status === 'ok' || f.code === 304 || f.code === 200;
+        const icon = isOk ? '🟢' : '🔴';
+        const info = (f.code === 304) ? 'HTTP 304 (Cache unverändert)' : (isOk ? `HTTP ${f.code}` : `Fehler: ${f.status} (${f.code})`);
+        return `
+          <div class="modal-row">
+            <span style="font-weight:500">${icon} ${escapeHtml(f.title)}</span>
+            <span style="color:${isOk ? 'var(--text-muted)' : '#ef4444'}; font-family:monospace; font-size:0.8rem">${escapeHtml(info)}</span>
+          </div>
+        `;
+      }).join('');
     }
 
     document.addEventListener('keydown', (e) => {
@@ -896,7 +919,20 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 def render_page(feed_health, feeds, is_archive=False):
     now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y, %H:%M")
     ok_feeds = sum(1 for h in feed_health if h["status"] == "ok" or h["code"] in (200, 304))
-    health_text = f'<span class="meta-sep">•</span><span class="meta-clickable" onclick="toggleModal(\'health-modal\', true)">{"🟢" if ok_feeds == len(feed_health) else "🟡"} {ok_feeds}/{len(feed_health)} Feeds</span>'
+    failed_count = len(feed_health) - ok_feeds
+
+    if failed_count > 0:
+        health_text = (
+            f'<span class="meta-sep">•</span>'
+            f'<span style="color:#eab308; cursor:pointer;" onclick="toggleModal(\'health-modal\', true)" title="Klicken für Fehlerdetails">'
+            f'🟡 {ok_feeds}/{len(feed_health)} Feeds ({failed_count} gestört) ℹ️</span>'
+        )
+    else:
+        health_text = (
+            f'<span class="meta-sep">•</span>'
+            f'<span class="meta-clickable" onclick="toggleModal(\'health-modal\', true)" title="Klicken für Feed-Details">'
+            f'🟢 {ok_feeds}/{len(feed_health)} Feeds online ℹ️</span>'
+        )
 
     auth_overlay = """
     <div id="auth-overlay" class="modal-overlay" style="display:none">
@@ -958,7 +994,6 @@ if __name__ == "__main__":
     combined = (summarize_delta_with_gemini(bundled_new) + cached_articles) if bundled_new else cached_articles
     final_articles = sorted(consolidate_articles(combined), key=lambda a: a.get("_ts", 0), reverse=True)
 
-    # Verschlankte Payload-Generierung
     frontend_articles = []
     for a in final_articles:
         item = {
