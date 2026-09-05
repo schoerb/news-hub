@@ -14,7 +14,7 @@ import zoneinfo
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 
-# SDK-Warnung bezüglich AFC unterdrücken
+# Warnung bezüglich AFC unterdrücken
 warnings.filterwarnings("ignore", category=UserWarning, module="google.genai")
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -298,7 +298,7 @@ def fetch_all_feeds(feeds, cache_meta):
             if parsed_domain.scheme and parsed_domain.netloc:
                 headers["Referer"] = f"{parsed_domain.scheme}://{parsed_domain.netloc}/"
 
-            r = get_session().get(url, headers=headers, timeout=10)
+            r = get_session().get(url, headers=headers, timeout=8)
 
             if r.status_code == 304:
                 return ([], {"title": f["title"], "status": "ok", "code": 304})
@@ -319,7 +319,8 @@ def fetch_all_feeds(feeds, cache_meta):
                 return ([], {"title": f["title"], "status": "parse_error", "code": r.status_code})
 
             items = []
-            for e in parsed.entries:
+            # OPTIMIERUNG: Nur die neuesten 15 Einträge pro Feed untersuchen
+            for e in parsed.entries[:15]:
                 pub_iso = None
                 if hasattr(e, "published_parsed") and e.published_parsed:
                     dt = datetime.datetime(*e.published_parsed[:6], tzinfo=datetime.timezone.utc)
@@ -350,7 +351,7 @@ def fetch_all_feeds(feeds, cache_meta):
             return ([], {"title": f["title"], "status": "exception", "code": "timeout/conn"})
 
     all_items = []
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    with ThreadPoolExecutor(max_workers=12) as ex:
         results = list(ex.map(_fetch, feeds))
         for items, health in results:
             all_items.extend(items)
@@ -359,7 +360,7 @@ def fetch_all_feeds(feeds, cache_meta):
     return all_items, new_cache_meta, feed_health
 
 
-# --- Deduplizierung & Stemming ---
+# --- Deduplizierung & Stemming (Hochoptimiert) ---
 def clean_stem(word: str) -> str:
     w = word.lower().strip()
     for ending in ("s", "n", "en", "er", "es", "e"):
@@ -383,7 +384,7 @@ def is_duplicate(title_a: str, title_b: str, memo_a=None, memo_b=None) -> bool:
     common_nums = num_a & num_b
     common_kws = kw_a & kw_b
 
-    # 1. Zahlen-Regel: Nur wenn identische Nummern existieren UND mindestens 2 echte Keywords matchen
+    # 1. Zahlen-Regel
     if common_nums and len(common_kws) >= 2:
         return True
 
@@ -401,7 +402,15 @@ def is_duplicate(title_a: str, title_b: str, memo_a=None, memo_b=None) -> bool:
     if min_len >= 3 and (combined_overlap / min_len) >= DEDUP_OVERLAP_THRESHOLD:
         return True
 
-    # 4. Sequenzabgleich
+    # CPU-SHORT-CIRCUITS: Spart tausende teure difflib-Berechnungen
+    if not common_kws and not sub_matches:
+        return False
+
+    len_a, len_b = len(title_a), len(title_b)
+    if min(len_a, len_b) / max(len_a, len_b) < 0.65:
+        return False
+
+    # 4. Sequenzabgleich erst bei Vor-Qualifikation
     clean_a = re.sub(r"[^\w\s]", "", title_a.lower())
     clean_b = re.sub(r"[^\w\s]", "", title_b.lower())
     return SequenceMatcher(None, clean_a, clean_b).ratio() >= DEDUP_RATIO_THRESHOLD
@@ -448,7 +457,7 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
     return unique_list
 
 
-def summarize_chunk_with_gemini(client, chunk_items, max_retries=4):
+def summarize_chunk_with_gemini(client, chunk_items, max_retries=3):
     payload = [
         {
             "id": idx,
@@ -479,7 +488,8 @@ Artikel:
 {json.dumps(payload, ensure_ascii=False)}
 """
 
-    models = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
+    # 3.5-flash-lite antwortet extrem schnell bei identischer Übersetzungsgüte
+    models = ["gemini-3.5-flash-lite", "gemini-3.6-flash"]
 
     for attempt in range(max_retries):
         selected_model = models[min(attempt, len(models) - 1)]
@@ -518,10 +528,10 @@ Artikel:
         except Exception as err:
             err_str = str(err)
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                wait_time = 25 + (attempt * 10)
+                wait_time = 22 + (attempt * 6)
                 print(f"⏳ Rate-Limit (429) erreicht. Warte {wait_time}s vor erneutem Versuch...")
             else:
-                wait_time = (2 ** attempt) * 4
+                wait_time = (2 ** attempt) * 2
                 print(f"⚠️ Gemini API Fehler (Versuch {attempt + 1}/{max_retries}) mit {selected_model}: {err}")
             
             time.sleep(wait_time)
@@ -553,15 +563,15 @@ def summarize_delta_with_gemini(new_items):
         return []
 
     client = genai.Client(api_key=api_key)
-    chunk_size = 40
+    chunk_size = 35
     chunks = [new_items[i : i + chunk_size] for i in range(0, len(new_items), chunk_size)]
 
     all_processed = []
-    for idx, c in enumerate(chunks):
-        if idx > 0:
-            time.sleep(3)
-        res = summarize_chunk_with_gemini(client, c)
-        all_processed.extend(res)
+    # 2 Worker parallel: Maximiert Durchsatz ohne Free-Tier Rate-Limits zu reißen
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        futures = [ex.submit(summarize_chunk_with_gemini, client, c) for c in chunks]
+        for f in futures:
+            all_processed.extend(f.result())
 
     return all_processed
 
@@ -1082,7 +1092,6 @@ SHARED_JS = """
       }
     }
 
-    // --- Gesehen-Status (Scroll-Erkennung via IntersectionObserver) ---
     function getSeenArticles() {
       try { return JSON.parse(localStorage.getItem('seen_news') || '[]'); } catch(e) { return []; }
     }
@@ -1939,7 +1948,7 @@ if __name__ == "__main__":
     cached_articles = expire_old_articles(cached_articles)
     feeds = parse_opml()
 
-    # 2. Feeds abrufen (Thread-Safe)
+    # 2. Feeds abrufen (Thread-Safe & Timeout 8s)
     raw_feed_items, updated_cache_meta, feed_health = fetch_all_feeds(feeds, cache_meta)
     with open("cache_meta.json", "w", encoding="utf-8") as f:
         json.dump(updated_cache_meta, f, separators=(',', ':'))
@@ -1971,7 +1980,7 @@ if __name__ == "__main__":
     # 4. Batch-Deduplizierung
     bundled_new = consolidate_articles(truly_new_items)
 
-    # 5. Echte Unikate an Gemini senden (Titel-Optimierung & Zusammenfassung)
+    # 5. Echte Unikate an Gemini senden (Parallele 2-Worker-Verarbeitung mit 3.5-flash-lite)
     if bundled_new:
         processed_new = summarize_delta_with_gemini(bundled_new)
         combined_articles = processed_new + cached_articles
