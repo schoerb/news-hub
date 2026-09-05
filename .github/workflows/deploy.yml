@@ -2,7 +2,9 @@ name: Build and Deploy News Hub
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    # Läuft alle 30 Minuten nur zwischen 04:00 und 22:59 UTC
+    # (entspricht nachts in DE einer Pause ab ca. 00:00/01:00 bis 06:00 Uhr)
+    - cron: '*/30 4-22 * * *'
   workflow_dispatch:
   push:
     branches:
