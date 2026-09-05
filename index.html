@@ -134,7 +134,7 @@
       border-bottom: 1px solid var(--border);
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
+      align-items: center;
       min-width: 290px;
     }
     .sidebar-header h1 { font-size: 1.15rem; font-weight: 700; color: var(--text-bold); }
@@ -202,30 +202,65 @@
       position: relative;
     }
 
-    /* Desktop Sticky Header */
+    /* Auto-Hide Sticky Header */
     .stream-header {
       position: sticky;
       top: 0;
       z-index: 50;
-      background: rgba(18, 20, 24, 0.82);
+      background: rgba(18, 20, 24, 0.85);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
       border-bottom: 1px solid var(--border);
-      padding: 14px 36px;
+      padding: 12px 36px;
       margin-bottom: 0;
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 16px;
+      transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .stream-header.header-hidden {
+      transform: translateY(-100%);
     }
 
     [data-theme="light"] .stream-header {
-      background: rgba(248, 250, 252, 0.85);
+      background: rgba(248, 250, 252, 0.88);
     }
 
-    .header-left { display: flex; align-items: center; gap: 12px; }
-    .header-right { display: flex; align-items: center; gap: 8px; }
-    .stream-header h2 { font-size: 1.35rem; font-weight: 700; color: var(--text-bold); }
+    .header-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+    .header-title-group {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .stream-header h2 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--text-bold);
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+
+    /* Neu: Einzeilige, kompakte Info-Leiste im Header */
+    .header-meta-inline {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .header-meta-inline::-webkit-scrollbar { display: none; }
+    .meta-sep { color: var(--border); }
+    .meta-clickable { color: var(--accent); cursor: pointer; }
+    .meta-clickable:hover { text-decoration: underline; }
 
     .theme-toggle, .menu-toggle {
       background: var(--card-bg);
@@ -259,7 +294,7 @@
     .search-input:focus { border-color: var(--accent); }
 
     .cards-grid {
-      padding: 24px 36px 60px 36px;
+      padding: 22px 36px 60px 36px;
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
       gap: 18px;
@@ -287,7 +322,6 @@
       box-shadow: 0 0 0 2px var(--focus-ring);
     }
 
-    /* Gesehen (gescrollt) vs. Gelesen (geklickt) */
     .feed-card.seen {
       opacity: 0.72;
     }
@@ -497,14 +531,7 @@
 
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-      <div>
-        <h1>⚡ News-Hub</h1>
-        <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
-          Stand: 05.09.2026, 11:53 Uhr<br>
-          <span style="color: var(--accent); cursor: pointer;" id="sidebar-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
-          <br><span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: Deskmodder.de, 9to5Linux">🟡 20/22 Feeds (2 gestört) ℹ️</span>
-        </p>
-      </div>
+      <h1>⚡ News-Hub</h1>
       <button class="close-btn" onclick="toggleSidebar()">&times;</button>
     </div>
     <ul class="source-list" id="source-list">
@@ -526,7 +553,15 @@
     <div class="stream-header">
       <div class="header-left">
         <button class="menu-toggle" onclick="toggleSidebar()" title="Menü ein-/ausblenden (Taste: [)">☰</button>
-        <h2 id="current-title">Alle Meldungen</h2>
+        <div class="header-title-group">
+          <h2 id="current-title">Alle Meldungen</h2>
+          <div class="header-meta-inline">
+            <span>Stand: 05.09.2026, 11:59 Uhr</span>
+            <span class="meta-sep">•</span>
+            <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()" title="Klicken für Dubletten-Statistik">🧹 Duplikate bereinigt ℹ️</span>
+            <span class="meta-sep">•</span><span style="color:#eab308; cursor:pointer;" onclick="openHealthModal()" title="Klicken für Fehlerdetails: Deskmodder.de, 9to5Linux">🟡 20/22 Feeds (2 gestört) ℹ️</span>
+          </div>
+        </div>
       </div>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Artikel durchsuchen..." oninput="filterSearch(this.value)">
@@ -623,6 +658,35 @@
         sb.focus();
         sb.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
+    }
+
+    function initSmartHeader() {
+      const mainEl = document.querySelector('.main');
+      const header = document.querySelector('.stream-header');
+      if (!mainEl || !header) return;
+
+      let lastScrollTop = 0;
+      const scrollThreshold = 50;
+      const delta = 6;
+
+      mainEl.addEventListener('scroll', () => {
+        const currentScroll = mainEl.scrollTop;
+
+        if (document.activeElement === document.getElementById('search-box')) {
+          header.classList.remove('header-hidden');
+          return;
+        }
+
+        if (Math.abs(lastScrollTop - currentScroll) <= delta) return;
+
+        if (currentScroll > lastScrollTop && currentScroll > scrollThreshold) {
+          header.classList.add('header-hidden');
+        } else if (currentScroll < lastScrollTop) {
+          header.classList.remove('header-hidden');
+        }
+
+        lastScrollTop = currentScroll;
+      }, { passive: true });
     }
 
     function getSeenArticles() {
@@ -877,6 +941,7 @@
       renderUI(liveArticles);
       initReadState();
       initSeenObserver();
+      initSmartHeader();
       updateRelativeTimes();
       initSidebarState();
     }
@@ -896,8 +961,8 @@
       });
 
       document.getElementById('current-title').textContent = `Alle Meldungen (${articles.length})`;
-      const sidebarDupInfo = document.getElementById('sidebar-dup-info');
-      if (sidebarDupInfo) sidebarDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
+      const headerDupInfo = document.getElementById('header-dup-info');
+      if (headerDupInfo) headerDupInfo.innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
 
       const knownSources = new Set([...configuredSources, ...Object.keys(allSourceCounts)]);
       const sortedSources = Array.from(knownSources).sort((a, b) => {
