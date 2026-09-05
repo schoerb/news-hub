@@ -8,10 +8,14 @@ import re
 import threading
 import time
 import urllib.parse
+import warnings
 import xml.etree.ElementTree as ET
 import zoneinfo
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
+
+# SDK-Warnung bezüglich AFC unterdrücken
+warnings.filterwarnings("ignore", category=UserWarning, module="google.genai")
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 import feedparser
@@ -26,7 +30,7 @@ MAX_RETENTION_HOURS = 48
 REMOTE_DATA_URL = "https://schoerb.github.io/news-hub/data.json"
 BERLIN_TZ = zoneinfo.ZoneInfo("Europe/Berlin")
 
-# Einstellbare Schwellenwerte für Dubletten (via Workflow/Env)
+# Einstellbare Schwellenwerte für Dubletten
 DEDUP_RATIO_THRESHOLD = float(os.environ.get("DEDUP_RATIO", "0.78"))
 DEDUP_OVERLAP_THRESHOLD = float(os.environ.get("DEDUP_OVERLAP", "0.65"))
 
@@ -567,7 +571,7 @@ def expire_old_articles(articles):
     return [a for a in articles if a.get("_ts", 0) > cutoff_ts]
 
 
-# --- UI & Layout Strings ---
+# --- UI & Layout Strings (Sticky Topbar & Mobile Bottom Bar) ---
 SHARED_CSS = """
     :root {
       --bg: #121418;
@@ -753,23 +757,35 @@ SHARED_CSS = """
     .main {
       flex-grow: 1;
       overflow-y: auto;
-      padding: 28px 40px;
+      padding: 0;
       max-width: 100%;
-      transition: padding 0.2s ease;
+      position: relative;
     }
 
+    /* Desktop Sticky Header */
     .stream-header {
-      margin-bottom: 24px;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(18, 20, 24, 0.82);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 36px;
+      margin-bottom: 0;
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 16px;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 16px;
     }
+
+    [data-theme="light"] .stream-header {
+      background: rgba(248, 250, 252, 0.85);
+    }
+
     .header-left { display: flex; align-items: center; gap: 12px; }
     .header-right { display: flex; align-items: center; gap: 8px; }
-    .stream-header h2 { font-size: 1.4rem; font-weight: 700; color: var(--text-bold); }
+    .stream-header h2 { font-size: 1.35rem; font-weight: 700; color: var(--text-bold); }
 
     .theme-toggle, .menu-toggle {
       background: var(--card-bg);
@@ -803,6 +819,7 @@ SHARED_CSS = """
     .search-input:focus { border-color: var(--accent); }
 
     .cards-grid {
+      padding: 24px 36px 60px 36px;
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
       gap: 18px;
@@ -872,6 +889,11 @@ SHARED_CSS = """
       background: var(--border);
     }
 
+    /* Auf Desktop ausgeblendet */
+    .mobile-bottom-bar {
+      display: none;
+    }
+
     @media (max-width: 768px) {
       .sidebar {
         position: fixed;
@@ -883,14 +905,76 @@ SHARED_CSS = """
       .sidebar.open { transform: translateX(0); }
       .sidebar.collapsed { width: 290px; }
       .sidebar-backdrop.open { display: block; }
-      .main { padding: 14px 12px; }
-      .stream-header { flex-direction: column; align-items: stretch; gap: 12px; }
+
+      .stream-header {
+        padding: 10px 14px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+      }
+      .stream-header h2 { font-size: 1.15rem; }
+      
+      /* Oben Platz sparen: Desktop-Buttons auf Mobile ausblenden */
+      .stream-header .menu-toggle,
+      .stream-header .theme-toggle,
+      .stream-header #refresh-btn {
+        display: none !important;
+      }
+
       .header-right { width: 100%; }
-      .search-input { flex-grow: 1; width: auto; }
-      .cards-grid { grid-template-columns: 1fr; gap: 12px; }
+      .search-input { flex-grow: 1; width: 100%; }
+
+      .cards-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+        padding: 14px 12px 90px 12px; /* Puffer unten für schwebende Leiste */
+      }
       .feed-card { padding: 14px; }
       .feed-thumb { height: 150px; }
       .shortcuts-hint { display: none; }
+
+      /* Schwebende Daumen-Kapsel */
+      .mobile-bottom-bar {
+        display: flex;
+        position: fixed;
+        bottom: 18px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(26, 30, 36, 0.92);
+        border: 1px solid var(--border);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-radius: 36px;
+        padding: 6px 12px;
+        gap: 10px;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+        z-index: 105;
+      }
+
+      [data-theme="light"] .mobile-bottom-bar {
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+      }
+
+      .bottom-btn {
+        background: transparent;
+        border: none;
+        color: var(--text);
+        font-size: 1.15rem;
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s, transform 0.1s;
+      }
+
+      .bottom-btn:active {
+        transform: scale(0.92);
+        background: var(--accent-dim);
+      }
     }
 """
 
@@ -981,6 +1065,14 @@ SHARED_JS = """
       } else {
         sidebar.classList.toggle('collapsed');
         localStorage.setItem('sidebar_closed', sidebar.classList.contains('collapsed'));
+      }
+    }
+
+    function focusSearch() {
+      const sb = document.getElementById('search-box');
+      if (sb) {
+        sb.focus();
+        sb.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     }
 
@@ -1212,6 +1304,14 @@ def render_html_dashboard(feed_health=None, feeds=None):
     <div id="articles-container" class="cards-grid"></div>
   </main>
 
+  <!-- Mobile Floating Pill Navigation -->
+  <nav class="mobile-bottom-bar" aria-label="Mobile Navigation">
+    <button class="bottom-btn" onclick="toggleSidebar()" title="Feeds & Filter">☰</button>
+    <button class="bottom-btn" onclick="focusSearch()" title="Suche">🔍</button>
+    <button class="bottom-btn" id="mobile-refresh-btn" onclick="triggerWorkflow()" title="Aktualisieren">🔄</button>
+    <button class="bottom-btn" onclick="toggleTheme()" title="Theme wechseln">🌓</button>
+  </nav>
+
   <script>
     let rawEncryptedData = "";
     let globalArticles = [];
@@ -1224,7 +1324,8 @@ def render_html_dashboard(feed_health=None, feeds=None):
     __SHARED_JS__
 
     async function triggerWorkflow() {
-      const btn = document.getElementById('refresh-btn');
+      const desktopBtn = document.getElementById('refresh-btn');
+      const mobileBtn = document.getElementById('mobile-refresh-btn');
       let token = localStorage.getItem('gh_dispatch_token');
 
       if (!token) {
@@ -1233,9 +1334,12 @@ def render_html_dashboard(feed_health=None, feeds=None):
         localStorage.setItem('gh_dispatch_token', token.trim());
       }
 
-      btn.style.opacity = '0.5';
-      btn.style.pointerEvents = 'none';
-      btn.textContent = '⏳';
+      const setStatus = (txt, disabled) => {
+        if (desktopBtn) { desktopBtn.textContent = txt; desktopBtn.style.pointerEvents = disabled ? 'none' : 'auto'; }
+        if (mobileBtn) { mobileBtn.textContent = txt; mobileBtn.style.pointerEvents = disabled ? 'none' : 'auto'; }
+      };
+
+      setStatus('⏳', true);
 
       try {
         const res = await fetch('https://api.github.com/repos/schoerb/news-hub/actions/workflows/deploy.yml/dispatches', {
@@ -1254,9 +1358,7 @@ def render_html_dashboard(feed_health=None, feeds=None):
       } catch (err) {
         alert('Fehler beim Verbinden zur GitHub API: ' + err.message);
       } finally {
-        btn.style.opacity = '1';
-        btn.style.pointerEvents = 'auto';
-        btn.textContent = '🔄';
+        setStatus('🔄', false);
       }
     }
 
@@ -1495,7 +1597,7 @@ def render_html_dashboard(feed_health=None, feeds=None):
         if (selectedIndex >= 0 && selectedIndex < visible.length) toggleRead(visible[selectedIndex].dataset.id);
       } else if (e.key === '/') {
         e.preventDefault();
-        document.getElementById('search-box').focus();
+        focusSearch();
       }
     });
 
@@ -1592,6 +1694,13 @@ def render_archive_html(feed_health=None, feeds=None):
     </div>
     <div id="archive-container" class="cards-grid"></div>
   </main>
+
+  <!-- Mobile Floating Pill Navigation für Archiv -->
+  <nav class="mobile-bottom-bar" aria-label="Mobile Navigation">
+    <button class="bottom-btn" onclick="toggleSidebar()" title="Feeds & Filter">☰</button>
+    <button class="bottom-btn" onclick="focusSearch()" title="Suche">🔍</button>
+    <button class="bottom-btn" onclick="toggleTheme()" title="Theme wechseln">🌓</button>
+  </nav>
 
   <script>
     let archiveArticles = [];
@@ -1740,7 +1849,7 @@ def render_archive_html(feed_health=None, feeds=None):
       }
       if (e.key === '[') { e.preventDefault(); toggleSidebar(); }
       else if (e.key === 'Escape') { closeHealthModal(); closeDuplicateModal(); }
-      else if (e.key === '/') { e.preventDefault(); document.getElementById('search-box').focus(); }
+      else if (e.key === '/') { e.preventDefault(); focusSearch(); }
     });
 
     document.addEventListener('DOMContentLoaded', loadArchive);
