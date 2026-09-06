@@ -202,7 +202,7 @@
           <h2 id="current-title">Meldungen laden...</h2>
           <div class="header-meta-inline">
             <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()">🧹 Duplikate ℹ️</span>
-            <span class="meta-sep">•</span><span style="color:#eab308; cursor:pointer;" onclick="toggleModal('health-modal', true)" title="Klicken für Fehlerdetails">🟡 21/22 Feeds (1 gestört) ℹ️</span>
+            <span class="meta-sep">•</span><span style="color:#eab308; cursor:pointer;" onclick="toggleModal('health-modal', true)" title="Klicken für Fehlerdetails">🟡 20/22 Feeds (2 gestört) ℹ️</span>
           </div>
         </div>
       </div>
@@ -225,8 +225,8 @@
   <script>
     window.IS_ARCHIVE = true;
     const configuredSources = ["ComputerBase", "OMG! Ubuntu!", "9to5Google", "Topthemen - SZ.de", "WinFuture News", "GoogleWatchBlog", "mobiFlip", "Android Headlines", "Android Police", "teltarif.de", "Düsseldorf | RP ONLINE", "Caschys Blog", "Notebookcheck.com", "Deskmodder.de", "heise online News", "Android Authority", "XDA", "Travel-Dealz.de", "SmartDroid.de", "Aktuell - FAZ.NET", "Android Sage", "9to5Linux"];
-    const feedHealthData = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 200}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 200}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 200}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "ok", "code": 200}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 200}, {"title": "SmartDroid.de", "status": "ok", "code": 200}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 200}, {"title": "9to5Linux", "status": "exception", "code": "timeout/conn"}];
-    const buildTimestampStr = "06.09.2026, 13:35";
+    const feedHealthData = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 200}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 200}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 200}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "exception", "code": "timeout/conn"}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 200}, {"title": "SmartDroid.de", "status": "ok", "code": 200}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 200}, {"title": "9to5Linux", "status": "exception", "code": "timeout/conn"}];
+    const buildTimestampStr = "06.09.2026, 13:43";
 
     let rawEncryptedData = "", globalArticles = [], liveArticles = [], allSourceCounts = {};
     let activeSource = 'all', searchQuery = '', selectedIndex = -1;
@@ -511,46 +511,71 @@ Direkt zum Actions-Status wechseln?')) {
       } catch (e) { alert(e.message); }
     }
 
+    function tryDecrypt(password) {
+      try {
+        if (!rawEncryptedData) return false;
+        if (rawEncryptedData.trim().startsWith('[')) {
+          globalArticles = JSON.parse(rawEncryptedData);
+          onReady();
+          return true;
+        }
+        const dec = CryptoJS.AES.decrypt(rawEncryptedData, password).toString(CryptoJS.enc.Utf8);
+        if (!dec || !dec.startsWith('[')) return false;
+        globalArticles = JSON.parse(dec);
+        onReady();
+        return true;
+      } catch (e) { return false; }
+    }
+
     async function init() {
       initTheme();
       initSidebarState();
       try {
         const r = await fetch('data.json');
         rawEncryptedData = await r.text();
-      } catch (e) { return; }
-
-      const pw = localStorage.getItem('hub_key');
-      if (rawEncryptedData.trim().startsWith('[')) {
-        globalArticles = JSON.parse(rawEncryptedData);
-      } else if (pw) {
-        try { globalArticles = JSON.parse(CryptoJS.AES.decrypt(rawEncryptedData, pw).toString(CryptoJS.enc.Utf8)); } catch(e) {}
-      }
-
-      if (!globalArticles.length) {
-        document.getElementById('auth-overlay').style.display = 'flex';
+      } catch (e) {
+        document.getElementById('current-title').textContent = "Fehler beim Laden von data.json";
         return;
       }
-      onReady();
+
+      if (rawEncryptedData.trim().startsWith('[')) {
+        globalArticles = JSON.parse(rawEncryptedData);
+        onReady();
+        return;
+      }
+
+      const savedPw = localStorage.getItem('hub_key');
+      if (savedPw && tryDecrypt(savedPw)) return;
+
+      document.getElementById('auth-overlay').style.display = 'flex';
+      const pwInput = document.getElementById('auth-password');
+      if (pwInput) pwInput.focus();
     }
 
     function submitAuth() {
       const pw = document.getElementById('auth-password').value;
-      try {
-        globalArticles = JSON.parse(CryptoJS.AES.decrypt(rawEncryptedData, pw).toString(CryptoJS.enc.Utf8));
+      if (tryDecrypt(pw)) {
         localStorage.setItem('hub_key', pw);
         document.getElementById('auth-overlay').style.display = 'none';
-        onReady();
-      } catch(e) { document.getElementById('auth-error').style.display = 'block'; }
+      } else {
+        document.getElementById('auth-error').style.display = 'block';
+      }
     }
 
     function onReady() {
+      document.getElementById('auth-overlay').style.display = 'none';
       const now = Date.now();
       const cutoff24 = new Date(now - 24 * 3600 * 1000);
       const cutoff48 = new Date(now - 48 * 3600 * 1000);
 
       liveArticles = globalArticles.filter(a => {
-        const p = new Date(a.published);
-        return window.IS_ARCHIVE ? (p < cutoff24 && p >= cutoff48) : (p >= cutoff24);
+        try {
+          const p = a.published ? new Date(a.published) : null;
+          if (!p || isNaN(p.getTime())) return !window.IS_ARCHIVE;
+          return window.IS_ARCHIVE ? (p < cutoff24 && p >= cutoff48) : (p >= cutoff24);
+        } catch (e) {
+          return !window.IS_ARCHIVE;
+        }
       });
 
       renderUI(liveArticles);
@@ -581,15 +606,7 @@ Direkt zum Actions-Status wechseln?')) {
             if (txt && txt !== rawEncryptedData) {
               rawEncryptedData = txt;
               const pw = localStorage.getItem('hub_key');
-              if (rawEncryptedData.trim().startsWith('[')) {
-                globalArticles = JSON.parse(rawEncryptedData);
-                onReady();
-              } else if (pw) {
-                try {
-                  globalArticles = JSON.parse(CryptoJS.AES.decrypt(rawEncryptedData, pw).toString(CryptoJS.enc.Utf8));
-                  onReady();
-                } catch(e) {}
-              }
+              tryDecrypt(pw);
             }
           })
           .catch(() => {});
