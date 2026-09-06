@@ -943,46 +943,71 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       } catch (e) { alert(e.message); }
     }
 
+    function tryDecrypt(password) {
+      try {
+        if (!rawEncryptedData) return false;
+        if (rawEncryptedData.trim().startsWith('[')) {
+          globalArticles = JSON.parse(rawEncryptedData);
+          onReady();
+          return true;
+        }
+        const dec = CryptoJS.AES.decrypt(rawEncryptedData, password).toString(CryptoJS.enc.Utf8);
+        if (!dec || !dec.startsWith('[')) return false;
+        globalArticles = JSON.parse(dec);
+        onReady();
+        return true;
+      } catch (e) { return false; }
+    }
+
     async function init() {
       initTheme();
       initSidebarState();
       try {
         const r = await fetch('data.json');
         rawEncryptedData = await r.text();
-      } catch (e) { return; }
-
-      const pw = localStorage.getItem('hub_key');
-      if (rawEncryptedData.trim().startsWith('[')) {
-        globalArticles = JSON.parse(rawEncryptedData);
-      } else if (pw) {
-        try { globalArticles = JSON.parse(CryptoJS.AES.decrypt(rawEncryptedData, pw).toString(CryptoJS.enc.Utf8)); } catch(e) {}
-      }
-
-      if (!globalArticles.length) {
-        document.getElementById('auth-overlay').style.display = 'flex';
+      } catch (e) {
+        document.getElementById('current-title').textContent = "Fehler beim Laden von data.json";
         return;
       }
-      onReady();
+
+      if (rawEncryptedData.trim().startsWith('[')) {
+        globalArticles = JSON.parse(rawEncryptedData);
+        onReady();
+        return;
+      }
+
+      const savedPw = localStorage.getItem('hub_key');
+      if (savedPw && tryDecrypt(savedPw)) return;
+
+      document.getElementById('auth-overlay').style.display = 'flex';
+      const pwInput = document.getElementById('auth-password');
+      if (pwInput) pwInput.focus();
     }
 
     function submitAuth() {
       const pw = document.getElementById('auth-password').value;
-      try {
-        globalArticles = JSON.parse(CryptoJS.AES.decrypt(rawEncryptedData, pw).toString(CryptoJS.enc.Utf8));
+      if (tryDecrypt(pw)) {
         localStorage.setItem('hub_key', pw);
         document.getElementById('auth-overlay').style.display = 'none';
-        onReady();
-      } catch(e) { document.getElementById('auth-error').style.display = 'block'; }
+      } else {
+        document.getElementById('auth-error').style.display = 'block';
+      }
     }
 
     function onReady() {
+      document.getElementById('auth-overlay').style.display = 'none';
       const now = Date.now();
       const cutoff24 = new Date(now - 24 * 3600 * 1000);
       const cutoff48 = new Date(now - 48 * 3600 * 1000);
 
       liveArticles = globalArticles.filter(a => {
-        const p = new Date(a.published);
-        return window.IS_ARCHIVE ? (p < cutoff24 && p >= cutoff48) : (p >= cutoff24);
+        try {
+          const p = a.published ? new Date(a.published) : null;
+          if (!p || isNaN(p.getTime())) return !window.IS_ARCHIVE;
+          return window.IS_ARCHIVE ? (p < cutoff24 && p >= cutoff48) : (p >= cutoff24);
+        } catch (e) {
+          return !window.IS_ARCHIVE;
+        }
       });
 
       renderUI(liveArticles);
@@ -1013,15 +1038,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
             if (txt && txt !== rawEncryptedData) {
               rawEncryptedData = txt;
               const pw = localStorage.getItem('hub_key');
-              if (rawEncryptedData.trim().startsWith('[')) {
-                globalArticles = JSON.parse(rawEncryptedData);
-                onReady();
-              } else if (pw) {
-                try {
-                  globalArticles = JSON.parse(CryptoJS.AES.decrypt(rawEncryptedData, pw).toString(CryptoJS.enc.Utf8));
-                  onReady();
-                } catch(e) {}
-              }
+              tryDecrypt(pw);
             }
           })
           .catch(() => {});
