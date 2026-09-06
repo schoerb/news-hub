@@ -27,6 +27,7 @@ from urllib3.util import Retry
 # --- Konfiguration ---
 DEFAULT_PRIO = 1
 MAX_RETENTION_HOURS = 48
+MAX_DEDUP_TIME_WINDOW_HOURS = 20  # Artikel über 20h Differenz werden nicht gemerged
 REMOTE_DATA_URL = "https://schoerb.github.io/news-hub/data.json"
 BERLIN_TZ = zoneinfo.ZoneInfo("Europe/Berlin")
 
@@ -253,7 +254,7 @@ def fetch_all_feeds(feeds, cache_meta):
             items = []
             for e in parsed.entries[:15]:
                 dt = None
-                for attr in ("published_parsed", "updated_parsed"):
+                for attr in ("published_parsed", "updated_parsed", "created_parsed"):
                     if getattr(e, attr, None):
                         dt = datetime.datetime(*getattr(e, attr)[:6], tzinfo=datetime.timezone.utc)
                         break
@@ -328,11 +329,23 @@ def is_duplicate(title_a: str, title_b: str, memo_a=None, memo_b=None) -> bool:
 def consolidate_articles(articles: list[dict]) -> list[dict]:
     sorted_arts = sorted(articles, key=lambda x: x.get("priority", DEFAULT_PRIO), reverse=True)
     unique_list, cached_features = [], []
+    max_time_diff = MAX_DEDUP_TIME_WINDOW_HOURS * 3600
 
     for item in sorted_arts:
         feat = extract_keywords(item["title"])
-        match = next((existing for idx, existing in enumerate(unique_list)
-                      if is_duplicate(item["title"], existing["title"], feat, cached_features[idx])), None)
+        ts_item = item.get("_ts", 0)
+
+        match = None
+        for idx, existing in enumerate(unique_list):
+            ts_exist = existing.get("_ts", 0)
+            # Zeitfenster-Short-Circuit: Weit auseinander liegende News überspringen
+            if ts_item and ts_exist and abs(ts_item - ts_exist) > max_time_diff:
+                continue
+
+            if is_duplicate(item["title"], existing["title"], feat, cached_features[idx]):
+                match = existing
+                break
+
         if match:
             src = item.get("source")
             others = match.setdefault("other_sources", [])
@@ -396,10 +409,18 @@ Artikel:
             for item in parsed.items:
                 if 0 <= item.id < len(chunk_items):
                     orig = chunk_items[item.id]
-                    clean_sum = html.escape(item.summary.strip())
+                    raw_sum = (item.summary or "").strip()
+                    clean_sum = html.escape(raw_sum)
                     clean_sum = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", clean_sum)
+                    
+                    # Expliziter Fallback falls die Zusammenfassung leer blieb
+                    if not clean_sum:
+                        clean_sum = html.escape(orig.get("summary", ""))[:180]
+
+                    clean_title = html.escape((item.german_title or "").strip()) or orig["title"]
+
                     processed.append({
-                        "title": html.escape(item.german_title.strip()) or orig["title"],
+                        "title": clean_title,
                         "link": orig["link"],
                         "source": orig["source"],
                         "other_sources": orig.get("other_sources", []),
@@ -503,10 +524,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .modal-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); gap: 12px; }
     .modal-close-btn { width: 100%; background: var(--accent); color: #fff; border: none; padding: 12px; border-radius: 6px; font-weight: 600; cursor: pointer; margin-top: 16px; }
     
-    .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 90; }
+    .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 110; }
     .sidebar {
       width: 290px; background: var(--sidebar-bg); border-right: 1px solid var(--border);
-      display: flex; flex-direction: column; flex-shrink: 0; z-index: 100;
+      display: flex; flex-direction: column; flex-shrink: 0; z-index: 120;
       transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
       overflow: hidden; white-space: nowrap;
     }
@@ -658,7 +679,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       <div class="header-left">
         <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
         <div class="header-title-group">
-          <h2 id="current-title">Alle Meldungen</h2>
+          <h2 id="current-title">Meldungen laden...</h2>
           <div class="header-meta-inline">
             <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()">🧹 Duplikate ℹ️</span>
             __HEALTH_BLOCK__
@@ -689,6 +710,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     let rawEncryptedData = "", globalArticles = [], liveArticles = [], allSourceCounts = {};
     let activeSource = 'all', searchQuery = '', selectedIndex = -1;
+    let searchDebounceTimer = null;
 
     function escapeHtml(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
     function hashString(str) { str = str || ''; let h = 0; for (let i = 0; i < str.length; i++) { h = ((h << 5) - h) + str.charCodeAt(i); h |= 0; } return Math.abs(h); }
@@ -734,9 +756,11 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     function toggleSidebar() {
       const sb = document.getElementById('sidebar');
+      const bar = document.querySelector('.mobile-bottom-bar');
       if (window.innerWidth <= 768) {
-        sb.classList.toggle('open');
+        const isOpen = sb.classList.toggle('open');
         document.getElementById('backdrop').classList.toggle('open');
+        if (bar) bar.classList.toggle('bar-hidden', isOpen);
       } else {
         sb.classList.toggle('collapsed');
         localStorage.setItem('sidebar_closed', sb.classList.contains('collapsed'));
@@ -940,7 +964,15 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if (window.innerWidth <= 768) toggleSidebar();
     }
 
-    function filterSearch(q) { searchQuery = q.toLowerCase().trim(); applyFilters(); }
+    // Debounced Search
+    function filterSearch(q) {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        searchQuery = q.toLowerCase().trim();
+        applyFilters();
+      }, 120);
+    }
+
     function applyFilters() {
       document.querySelectorAll('.feed-card').forEach(c => {
         const matchSrc = activeSource === 'all' || (c.dataset.sources || '').split(';;;').includes(activeSource);
@@ -1019,7 +1051,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const pw = document.getElementById('auth-password').value;
       if (tryDecrypt(pw)) {
         localStorage.setItem('hub_key', pw);
-        document.getElementById('auth-overlay').style.display = 'none';
       } else {
         document.getElementById('auth-error').style.display = 'block';
       }
