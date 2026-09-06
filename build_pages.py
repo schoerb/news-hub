@@ -475,9 +475,11 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     }
     .modal-card {
       background: var(--sidebar-bg); border: 1px solid var(--border); border-radius: 12px;
-      padding: 24px; width: 100%; max-width: 520px; max-height: 80vh; display: flex; flex-direction: column;
+      padding: 24px; width: 100%; max-width: 540px; max-height: 80vh; display: flex; flex-direction: column;
+      box-shadow: 0 16px 36px rgba(0,0,0,0.3);
     }
     .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+    .modal-header h2 { font-size: 1.15rem; color: var(--text-bold); }
     .modal-body { overflow-y: auto; flex-grow: 1; font-size: 0.88rem; }
     .modal-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); gap: 12px; }
     .modal-close-btn { width: 100%; background: var(--accent); color: #fff; border: none; padding: 12px; border-radius: 6px; font-weight: 600; cursor: pointer; margin-top: 16px; }
@@ -585,14 +587,28 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   <div id="health-modal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header"><h2>📡 Feed-Status Details</h2><button class="close-btn" onclick="toggleModal('health-modal', false)">&times;</button></div>
-      <div id="health-list" class="modal-body"></div>
+      <div class="modal-body">
+        <div style="margin-bottom:12px; padding:10px 14px; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; font-size:0.85rem;">
+          <a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" style="color:var(--link); text-decoration:none; display:flex; align-items:center; justify-content:space-between; font-weight:500;">
+            <span>⚙️ GitHub Actions Workflow-Status</span>
+            <span>↗</span>
+          </a>
+        </div>
+        <div id="health-list"></div>
+      </div>
       <button class="modal-close-btn" onclick="toggleModal('health-modal', false)">Schließen</button>
     </div>
   </div>
 
   <div id="duplicate-modal" class="modal-overlay">
     <div class="modal-card">
-      <div class="modal-header"><h2>🧹 Bereinigte Duplikate</h2><button class="close-btn" onclick="toggleModal('duplicate-modal', false)">&times;</button></div>
+      <div class="modal-header">
+        <h2>🧹 Bereinigte Duplikate nach Quelle</h2>
+        <button class="close-btn" onclick="toggleModal('duplicate-modal', false)">&times;</button>
+      </div>
+      <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
+        Klicke auf eine Quelle, um die verworfenen Artikel und deren Zuordnung anzuzeigen:
+      </p>
       <div id="duplicate-list" class="modal-body"></div>
       <button class="modal-close-btn" onclick="toggleModal('duplicate-modal', false)">Schließen</button>
     </div>
@@ -619,7 +635,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         <div class="header-title-group">
           <h2 id="current-title">Meldungen laden...</h2>
           <div class="header-meta-inline">
-            <span class="meta-clickable" id="header-dup-info" onclick="toggleModal('duplicate-modal', true)">🧹 Duplikate ℹ️</span>
+            <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()">🧹 Duplikate ℹ️</span>
             __HEALTH_BLOCK__
           </div>
         </div>
@@ -811,6 +827,81 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       }).join('');
     }
 
+    function toggleDupDetails(elementId) {
+      const el = document.getElementById(elementId);
+      if (el) el.style.display = (el.style.display === 'none') ? 'block' : 'none';
+    }
+
+    function openDuplicateModal() {
+      const listEl = document.getElementById('duplicate-list');
+      const dupMap = {};
+      let totalDups = 0;
+
+      liveArticles.forEach(a => {
+        const details = a.merged_details || [];
+        const accountedSources = new Set();
+
+        details.forEach(m => {
+          const s = m.source || "Unbekannt";
+          if (!dupMap[s]) dupMap[s] = [];
+          dupMap[s].push(m);
+          accountedSources.add(s);
+          totalDups++;
+        });
+
+        (a.other_sources || []).forEach(src => {
+          if (!accountedSources.has(src)) {
+            if (!dupMap[src]) dupMap[src] = [];
+            dupMap[src].push({
+              source: src,
+              title: "Titel im Alt-Cache nicht separat erfasst",
+              link: a.link,
+              matched_with: a.title,
+              is_legacy: true
+            });
+            totalDups++;
+          }
+        });
+      });
+
+      const sortedSources = Object.entries(dupMap).sort((a, b) => b[1].length - a[1].length);
+      if (!sortedSources.length) {
+        listEl.innerHTML = '<p style="color:var(--text-muted); padding:12px 0;">Keine zusammengeführten Duplikate im aktuellen Datenbestand.</p>';
+      } else {
+        listEl.innerHTML = `
+          <div style="margin-bottom:12px; font-weight:600; color:var(--accent);">
+            Gesamt: ${totalDups} bereinigte Doppelberichte (Klick auf Badge zum Einsehen)
+          </div>
+        ` + sortedSources.map(([src, items], idx) => `
+          <div style="border-bottom: 1px solid var(--border); padding: 8px 0;">
+            <div class="modal-row" style="border:none; padding:4px 0; cursor:pointer;" onclick="toggleDupDetails('dup-detail-${idx}')">
+              <span style="font-weight:600; color:var(--text);">${escapeHtml(src)}</span>
+              <span class="badge" style="background:var(--accent-dim); color:var(--accent); font-weight:600; cursor:pointer;">
+                ${items.length} Dubletten ▾
+              </span>
+            </div>
+            <div id="dup-detail-${idx}" style="display:none; padding:8px 0 4px 10px; font-size:0.8rem; border-left:2px solid var(--accent); margin-top:6px;">
+              ${items.map(it => `
+                <div style="margin-bottom:8px;">
+                  ${it.is_legacy 
+                    ? `<span style="color:var(--text-muted);">ℹ️ ${escapeHtml(it.title)}</span>`
+                    : `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener" style="color:var(--link); text-decoration:none; font-weight:500;">
+                         🔗 ${escapeHtml(it.title)}
+                       </a>`
+                  }
+                  <div style="color:var(--text-muted); font-size:0.75rem; margin-top:2px;">
+                    ↳ Zusammengeführt mit: <em>"${escapeHtml(it.matched_with)}"</em>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `).join('');
+      }
+
+      toggleModal('duplicate-modal', true);
+    }
+
     function filterSource(src, btn) {
       activeSource = src;
       document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
@@ -842,7 +933,13 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           headers: { 'Accept': 'application/vnd.github+json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify({ ref: 'main' })
         });
-        alert(res.status === 204 ? '🚀 Action gestartet! Dauer: ~1 Min.' : `Status: ${res.status}`);
+        if (res.status === 204) {
+          if (confirm('🚀 GitHub Action gestartet!\n\nDirekt zum Actions-Status wechseln?')) {
+            window.open('https://github.com/schoerb/news-hub/actions', '_blank');
+          }
+        } else {
+          alert(`Status: ${res.status}`);
+        }
       } catch (e) { alert(e.message); }
     }
 
@@ -892,15 +989,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       initSeenObserver();
       initSmartHeader();
 
-      const dupMap = {};
-      liveArticles.forEach(a => (a.merged_details || []).forEach(m => {
-        dupMap[m.source] = dupMap[m.source] || [];
-        dupMap[m.source].push(m);
-      }));
-      document.getElementById('duplicate-list').innerHTML = Object.entries(dupMap).map(([src, items]) => `
-        <div class="modal-row"><span style="font-weight:600">${escapeHtml(src)}</span><span class="badge">${items.length}</span></div>
-      `).join('') || '<p style="color:var(--text-muted); padding:10px 0;">Keine Dubletten vorhanden.</p>';
-
+      // Health Modal Liste mit genauen Status-Codes
       document.getElementById('health-list').innerHTML = feedHealthData.map(f => {
         const isOk = f.status === 'ok' || f.code === 304 || f.code === 200;
         const icon = isOk ? '🟢' : '🔴';
@@ -914,6 +1003,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       }).join('');
     }
 
+    // Automatische Aktualisierung beim Tab-Wechsel (z. B. Smartphone entsperren)
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         updateRelativeTimes();
@@ -947,6 +1037,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if (e.key === 'o' && selectedIndex >= 0) window.open(visible[selectedIndex].querySelector('.feed-title').href, '_blank');
       if (e.key === 'm' && selectedIndex >= 0) toggleRead(visible[selectedIndex].dataset.id);
       if (e.key === '/') { e.preventDefault(); focusSearch(); }
+      if (e.key === 'Escape') { toggleModal('health-modal', false); toggleModal('duplicate-modal', false); }
     });
 
     document.addEventListener('DOMContentLoaded', init);
