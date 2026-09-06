@@ -469,6 +469,26 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       font-family: 'Inter', -apple-system, sans-serif; background-color: var(--bg);
       color: var(--text); display: flex; height: 100vh; overflow: hidden;
     }
+
+    /* Auth Overlay (Undurchsichtig für zuverlässigen Sichtschutz) */
+    #auth-overlay {
+      position: fixed; inset: 0; background: var(--bg);
+      display: none; align-items: center; justify-content: center; z-index: 2000; padding: 16px;
+    }
+    .auth-card {
+      background: var(--sidebar-bg); border: 1px solid var(--border); border-radius: 12px;
+      padding: 32px 28px; width: 100%; max-width: 380px; text-align: center; box-shadow: 0 16px 36px rgba(0,0,0,0.3);
+    }
+    .auth-card h2 { font-size: 1.3rem; margin-bottom: 8px; color: var(--text-bold); }
+    .auth-card p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 20px; }
+    .auth-input {
+      width: 100%; background: var(--card-bg); border: 1px solid var(--border); color: var(--text);
+      padding: 12px 14px; border-radius: 6px; font-size: 0.95rem; margin-bottom: 14px; outline: none;
+    }
+    .auth-input:focus { border-color: var(--accent); }
+    .auth-btn { width: 100%; background: var(--accent); color: #fff; border: none; padding: 12px; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    .auth-error { color: #ef4444; font-size: 0.8rem; margin-top: 10px; display: none; }
+
     .modal-overlay {
       display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75);
       backdrop-filter: blur(2px); z-index: 1100; align-items: center; justify-content: center; padding: 16px;
@@ -582,7 +602,15 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   </style>
 </head>
 <body>
-  __AUTH_OVERLAY__
+  <div id="auth-overlay">
+    <div class="auth-card">
+      <h2>🔐 Geschützter Feed Hub</h2>
+      <p>Bitte Passwort eingeben, um die Artikel zu entschlüsseln.</p>
+      <input type="password" id="auth-password" class="auth-input" placeholder="Passwort..." onkeydown="if(event.key==='Enter') submitAuth()">
+      <button class="auth-btn" onclick="submitAuth()">Entschlüsseln</button>
+      <div id="auth-error" class="auth-error">Ungültiges Passwort!</div>
+    </div>
+  </div>
 
   <div id="health-modal" class="modal-overlay">
     <div class="modal-card">
@@ -633,7 +661,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       <div class="header-left">
         <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
         <div class="header-title-group">
-          <h2 id="current-title">Meldungen laden...</h2>
+          <h2 id="current-title">Alle Meldungen</h2>
           <div class="header-meta-inline">
             <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()">🧹 Duplikate ℹ️</span>
             __HEALTH_BLOCK__
@@ -666,7 +694,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     let activeSource = 'all', searchQuery = '', selectedIndex = -1;
 
     function escapeHtml(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-    function hashString(str) { let h = 0; for (let i = 0; i < str.length; i++) { h = ((h << 5) - h) + str.charCodeAt(i); h |= 0; } return Math.abs(h); }
+    function hashString(str) { str = str || ''; let h = 0; for (let i = 0; i < str.length; i++) { h = ((h << 5) - h) + str.charCodeAt(i); h |= 0; } return Math.abs(h); }
 
     function formatRelativeTime(isoStr) {
       if (!isoStr) return '';
@@ -948,13 +976,13 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         if (!rawEncryptedData) return false;
         if (rawEncryptedData.trim().startsWith('[')) {
           globalArticles = JSON.parse(rawEncryptedData);
-          onReady();
+          onDataLoaded();
           return true;
         }
         const dec = CryptoJS.AES.decrypt(rawEncryptedData, password).toString(CryptoJS.enc.Utf8);
         if (!dec || !dec.startsWith('[')) return false;
         globalArticles = JSON.parse(dec);
-        onReady();
+        onDataLoaded();
         return true;
       } catch (e) { return false; }
     }
@@ -962,23 +990,29 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     async function init() {
       initTheme();
       initSidebarState();
+
       try {
         const r = await fetch('data.json');
+        if (!r.ok) {
+          document.getElementById('current-title').textContent = `Fehler: data.json nicht gefunden (${r.status})`;
+          return;
+        }
         rawEncryptedData = await r.text();
       } catch (e) {
-        document.getElementById('current-title').textContent = "Fehler beim Laden von data.json";
+        document.getElementById('current-title').textContent = "Fehler beim Laden von data.json (CORS / offline)";
         return;
       }
 
       if (rawEncryptedData.trim().startsWith('[')) {
         globalArticles = JSON.parse(rawEncryptedData);
-        onReady();
+        onDataLoaded();
         return;
       }
 
       const savedPw = localStorage.getItem('hub_key');
       if (savedPw && tryDecrypt(savedPw)) return;
 
+      // Passwort-Overlay anzeigen
       document.getElementById('auth-overlay').style.display = 'flex';
       const pwInput = document.getElementById('auth-password');
       if (pwInput) pwInput.focus();
@@ -988,13 +1022,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const pw = document.getElementById('auth-password').value;
       if (tryDecrypt(pw)) {
         localStorage.setItem('hub_key', pw);
-        document.getElementById('auth-overlay').style.display = 'none';
       } else {
         document.getElementById('auth-error').style.display = 'block';
       }
     }
 
-    function onReady() {
+    function onDataLoaded() {
       document.getElementById('auth-overlay').style.display = 'none';
       const now = Date.now();
       const cutoff24 = new Date(now - 24 * 3600 * 1000);
@@ -1010,166 +1043,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         }
       });
 
-      renderUI(liveArticles);
-      initSeenObserver();
-      initSmartHeader();
-
-      // Health Modal Liste mit genauen Status-Codes
-      document.getElementById('health-list').innerHTML = feedHealthData.map(f => {
-        const isOk = f.status === 'ok' || f.code === 304 || f.code === 200;
-        const icon = isOk ? '🟢' : '🔴';
-        const info = (f.code === 304) ? 'HTTP 304 (Cache unverändert)' : (isOk ? `HTTP ${f.code}` : `Fehler: ${f.status} (${f.code})`);
-        return `
-          <div class="modal-row">
-            <span style="font-weight:500">${icon} ${escapeHtml(f.title)}</span>
-            <span style="color:${isOk ? 'var(--text-muted)' : '#ef4444'}; font-family:monospace; font-size:0.8rem">${escapeHtml(info)}</span>
-          </div>
-        `;
-      }).join('');
-    }
-
-    // Automatische Aktualisierung beim Tab-Wechsel (z. B. Smartphone entsperren)
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
-        updateRelativeTimes();
-        fetch('data.json')
-          .then(r => r.text())
-          .then(txt => {
-            if (txt && txt !== rawEncryptedData) {
-              rawEncryptedData = txt;
-              const pw = localStorage.getItem('hub_key');
-              tryDecrypt(pw);
-            }
-          })
-          .catch(() => {});
-      }
-    });
-
-    document.addEventListener('keydown', (e) => {
-      if (document.activeElement === document.getElementById('search-box')) return;
-      const visible = Array.from(document.querySelectorAll('.feed-card')).filter(c => c.style.display !== 'none');
-      if (e.key === '[') toggleSidebar();
-      if (e.key === 'j' && visible.length) { selectedIndex = Math.min(selectedIndex + 1, visible.length - 1); visible[selectedIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
-      if (e.key === 'k' && visible.length) { selectedIndex = Math.max(selectedIndex - 1, 0); visible[selectedIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
-      if (e.key === 'o' && selectedIndex >= 0) window.open(visible[selectedIndex].querySelector('.feed-title').href, '_blank');
-      if (e.key === 'm' && selectedIndex >= 0) toggleRead(visible[selectedIndex].dataset.id);
-      if (e.key === '/') { e.preventDefault(); focusSearch(); }
-      if (e.key === 'Escape') { toggleModal('health-modal', false); toggleModal('duplicate-modal', false); }
-    });
-
-    document.addEventListener('DOMContentLoaded', init);
-  </script>
-</body>
-</html>
-"""
-
-
-def render_page(feed_health, feeds, is_archive=False):
-    now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y, %H:%M")
-    ok_feeds = sum(1 for h in feed_health if h["status"] == "ok" or h["code"] in (200, 304))
-    failed_count = len(feed_health) - ok_feeds
-
-    if failed_count > 0:
-        health_text = (
-            f'<span class="meta-sep">•</span>'
-            f'<span style="color:#eab308; cursor:pointer;" onclick="toggleModal(\'health-modal\', true)" title="Klicken für Fehlerdetails">'
-            f'🟡 {ok_feeds}/{len(feed_health)} Feeds ({failed_count} gestört) ℹ️</span>'
-        )
-    else:
-        health_text = (
-            f'<span class="meta-sep">•</span>'
-            f'<span class="meta-clickable" onclick="toggleModal(\'health-modal\', true)" title="Klicken für Feed-Details">'
-            f'🟢 {ok_feeds}/{len(feed_health)} Feeds online ℹ️</span>'
-        )
-
-    auth_overlay = """
-    <div id="auth-overlay" class="modal-overlay" style="display:none">
-      <div class="modal-card" style="text-align:center">
-        <h2 style="margin-bottom:8px">🔐 Geschützt</h2>
-        <input type="password" id="auth-password" class="search-input" style="width:100%; margin-bottom:12px" placeholder="Passwort..." onkeydown="if(event.key==='Enter') submitAuth()">
-        <button class="modal-close-btn" style="margin-top:0" onclick="submitAuth()">Entschlüsseln</button>
-        <div id="auth-error" style="color:#ef4444; font-size:0.8rem; margin-top:8px; display:none">Ungültiges Passwort!</div>
-      </div>
-    </div>
-    """
-
-    page = PAGE_TEMPLATE.replace("__PAGE_TITLE__", "Archiv" if is_archive else "News-Hub") \
-                         .replace("__SIDEBAR_TITLE__", "Archiv (24–48h)" if is_archive else "News-Hub") \
-                         .replace("__NAV_TARGET_URL__", "index.html" if is_archive else "archive.html") \
-                         .replace("__NAV_TARGET_TEXT__", "← Zum Live-Feed" if is_archive else "📑 Zum Archiv (24–48h)") \
-                         .replace("__MARK_ALL_BTN__", "" if is_archive else '<button class="mark-all-btn" onclick="markAllAsRead()">✓ Alle als gelesen markieren</button>') \
-                         .replace("__DESKTOP_REFRESH_BTN__", "" if is_archive else '<button class="menu-toggle" id="refresh-btn" onclick="triggerWorkflow()">🔄</button>') \
-                         .replace("__MOBILE_REFRESH_BTN__", "" if is_archive else '<button class="bottom-btn" id="mobile-refresh-btn" onclick="triggerWorkflow()">🔄</button>') \
-                         .replace("__AUTH_OVERLAY__", auth_overlay) \
-                         .replace("__NOW_STR__", now_str) \
-                         .replace("__HEALTH_BLOCK__", health_text) \
-                         .replace("__HEALTH_DATA__", json.dumps(feed_health, ensure_ascii=False)) \
-                         .replace("__CONFIGURED_SOURCES__", json.dumps([f["title"] for f in feeds], ensure_ascii=False)) \
-                         .replace("__IS_ARCHIVE__", "true" if is_archive else "false")
-    return page
-
-
-if __name__ == "__main__":
-    os.makedirs("public", exist_ok=True)
-    page_password = os.environ.get("PAGE_PASSWORD", "")
-
-    cached_articles, cache_meta = load_cached_state()
-    cached_articles = expire_old_articles(cached_articles)
-    feeds = parse_opml()
-
-    raw_feed_items, updated_cache_meta, feed_health = fetch_all_feeds(feeds, cache_meta)
-    with open("cache_meta.json", "w", encoding="utf-8") as f:
-        json.dump(updated_cache_meta, f, separators=(',', ':'))
-
-    truly_new_items = []
-    for raw in raw_feed_items:
-        if any(raw["link"] == c["link"] for c in cached_articles):
-            continue
-        matched_cached = next((c for c in cached_articles if is_duplicate(raw["title"], c["title"])), None)
-        if matched_cached:
-            others = matched_cached.setdefault("other_sources", [])
-            if raw["source"] != matched_cached["source"] and raw["source"] not in others:
-                others.append(raw["source"])
-            matched_cached.setdefault("merged_details", []).append({
-                "source": raw.get("source", "Unbekannt"), "title": raw.get("title", ""),
-                "link": raw.get("link", ""), "matched_with": matched_cached.get("title", "")
-            })
-        else:
-            truly_new_items.append(raw)
-
-    print(f"📦 Neue Unikate: {len(truly_new_items)} (Cache: {len(cached_articles)})")
-    bundled_new = consolidate_articles(truly_new_items)
-    combined = (summarize_delta_with_gemini(bundled_new) + cached_articles) if bundled_new else cached_articles
-    final_articles = sorted(consolidate_articles(combined), key=lambda a: a.get("_ts", 0), reverse=True)
-
-    frontend_articles = []
-    for a in final_articles:
-        item = {
-            "title": a["title"],
-            "link": a["link"],
-            "source": a["source"],
-            "summary": a["summary"],
-            "published": a.get("published"),
-        }
-        if a.get("image"):
-            item["image"] = a["image"]
-        if a.get("other_sources"):
-            item["other_sources"] = a["other_sources"]
-        if a.get("merged_details"):
-            item["merged_details"] = a["merged_details"]
-        frontend_articles.append(item)
-
-    if "GITHUB_OUTPUT" in os.environ:
-        has_changes = bool(bundled_new) or (len(cached_articles) != len(final_articles))
-        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as gh_out:
-            gh_out.write(f"deploy={'true' if has_changes else 'false'}\n")
-
-    articles_json = json.dumps(frontend_articles, ensure_ascii=False, separators=(',', ':'))
-    with open("public/data.json", "w", encoding="utf-8") as f:
-        f.write(encrypt_payload(articles_json, page_password) if page_password else articles_json)
-
-    with open("public/index.html", "w", encoding="utf-8") as f:
-        f.write(render_page(feed_health, feeds, is_archive=False))
-
-    with open("public/archive.html", "w", encoding="utf-8") as f:
-        f.write(render_page(feed_health, feeds, is_archive=True))
+      // Fallback: Wenn in den letzten 24h nichts Neues kam, alles Vorhandene anzeigen
+      if (!window.IS_ARCHIVE && liveArticles.length === 0 && globalArticles.length > 0) {
+        Ich bin nur ein Sprachmodell und kann dabei nicht helfen.
