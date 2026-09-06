@@ -26,6 +26,25 @@
       font-family: 'Inter', -apple-system, sans-serif; background-color: var(--bg);
       color: var(--text); display: flex; height: 100vh; overflow: hidden;
     }
+
+    #auth-overlay {
+      position: fixed; inset: 0; background: var(--bg);
+      display: none; align-items: center; justify-content: center; z-index: 2000; padding: 16px;
+    }
+    .auth-card {
+      background: var(--sidebar-bg); border: 1px solid var(--border); border-radius: 12px;
+      padding: 32px 28px; width: 100%; max-width: 380px; text-align: center; box-shadow: 0 16px 36px rgba(0,0,0,0.3);
+    }
+    .auth-card h2 { font-size: 1.3rem; margin-bottom: 8px; color: var(--text-bold); }
+    .auth-card p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 20px; }
+    .auth-input {
+      width: 100%; background: var(--card-bg); border: 1px solid var(--border); color: var(--text);
+      padding: 12px 14px; border-radius: 6px; font-size: 0.95rem; margin-bottom: 14px; outline: none;
+    }
+    .auth-input:focus { border-color: var(--accent); }
+    .auth-btn { width: 100%; background: var(--accent); color: #fff; border: none; padding: 12px; border-radius: 6px; font-weight: 600; cursor: pointer; }
+    .auth-error { color: #ef4444; font-size: 0.8rem; margin-top: 10px; display: none; }
+
     .modal-overlay {
       display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75);
       backdrop-filter: blur(2px); z-index: 1100; align-items: center; justify-content: center; padding: 16px;
@@ -48,9 +67,7 @@
       transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
       overflow: hidden; white-space: nowrap;
     }
-    .sidebar.collapsed {
-      width: 0 !important; border-right: none !important; visibility: hidden;
-    }
+    .sidebar.collapsed { width: 0 !important; border-right: none !important; visibility: hidden; }
     .sidebar-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; min-width: 290px; }
     .sidebar-header h1 { font-size: 0.98rem; font-weight: 700; color: var(--text-bold); letter-spacing: 0.01em; }
     .close-btn { background: none; border: none; color: var(--text-muted); font-size: 1.4rem; cursor: pointer; }
@@ -139,16 +156,15 @@
   </style>
 </head>
 <body>
-  
-    <div id="auth-overlay" class="modal-overlay" style="display:none">
-      <div class="modal-card" style="text-align:center">
-        <h2 style="margin-bottom:8px">🔐 Geschützt</h2>
-        <input type="password" id="auth-password" class="search-input" style="width:100%; margin-bottom:12px" placeholder="Passwort..." onkeydown="if(event.key==='Enter') submitAuth()">
-        <button class="modal-close-btn" style="margin-top:0" onclick="submitAuth()">Entschlüsseln</button>
-        <div id="auth-error" style="color:#ef4444; font-size:0.8rem; margin-top:8px; display:none">Ungültiges Passwort!</div>
-      </div>
+  <div id="auth-overlay">
+    <div class="auth-card">
+      <h2>🔐 Geschützter Feed Hub</h2>
+      <p>Bitte Passwort eingeben, um die Artikel zu entschlüsseln.</p>
+      <input type="password" id="auth-password" class="auth-input" placeholder="Passwort..." onkeydown="if(event.key==='Enter') submitAuth()">
+      <button class="auth-btn" onclick="submitAuth()">Entschlüsseln</button>
+      <div id="auth-error" class="auth-error">Ungültiges Passwort!</div>
     </div>
-    
+  </div>
 
   <div id="health-modal" class="modal-overlay">
     <div class="modal-card">
@@ -199,10 +215,10 @@
       <div class="header-left">
         <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
         <div class="header-title-group">
-          <h2 id="current-title">Meldungen laden...</h2>
+          <h2 id="current-title">Alle Meldungen</h2>
           <div class="header-meta-inline">
             <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()">🧹 Duplikate ℹ️</span>
-            <span class="meta-sep">•</span><span style="color:#eab308; cursor:pointer;" onclick="toggleModal('health-modal', true)" title="Klicken für Fehlerdetails">🟡 20/22 Feeds (2 gestört) ℹ️</span>
+            <span class="meta-sep">•</span><span style="color:#eab308; cursor:pointer;" onclick="toggleModal('health-modal', true)" title="Klicken für Fehlerdetails">🟡 21/22 Feeds (1 gestört) ℹ️</span>
           </div>
         </div>
       </div>
@@ -225,14 +241,14 @@
   <script>
     window.IS_ARCHIVE = false;
     const configuredSources = ["ComputerBase", "OMG! Ubuntu!", "9to5Google", "Topthemen - SZ.de", "WinFuture News", "GoogleWatchBlog", "mobiFlip", "Android Headlines", "Android Police", "teltarif.de", "Düsseldorf | RP ONLINE", "Caschys Blog", "Notebookcheck.com", "Deskmodder.de", "heise online News", "Android Authority", "XDA", "Travel-Dealz.de", "SmartDroid.de", "Aktuell - FAZ.NET", "Android Sage", "9to5Linux"];
-    const feedHealthData = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 200}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 200}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 200}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "exception", "code": "timeout/conn"}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 200}, {"title": "SmartDroid.de", "status": "ok", "code": 200}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 200}, {"title": "9to5Linux", "status": "exception", "code": "timeout/conn"}];
-    const buildTimestampStr = "06.09.2026, 14:14";
+    const feedHealthData = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 200}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 200}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 200}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "exception", "code": "timeout/conn"}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 200}, {"title": "SmartDroid.de", "status": "ok", "code": 200}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 200}, {"title": "9to5Linux", "status": "ok", "code": 200}];
+    const buildTimestampStr = "06.09.2026, 15:20";
 
     let rawEncryptedData = "", globalArticles = [], liveArticles = [], allSourceCounts = {};
     let activeSource = 'all', searchQuery = '', selectedIndex = -1;
 
     function escapeHtml(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-    function hashString(str) { let h = 0; for (let i = 0; i < str.length; i++) { h = ((h << 5) - h) + str.charCodeAt(i); h |= 0; } return Math.abs(h); }
+    function hashString(str) { str = str || ''; let h = 0; for (let i = 0; i < str.length; i++) { h = ((h << 5) - h) + str.charCodeAt(i); h |= 0; } return Math.abs(h); }
 
     function formatRelativeTime(isoStr) {
       if (!isoStr) return '';
@@ -247,7 +263,7 @@
     function updateRelativeTimes() {
       document.querySelectorAll('.feed-card').forEach(card => {
         const id = card.dataset.id;
-        const art = liveArticles.find(a => String(hashString(a.link)) === String(id));
+        const art = liveArticles.find(a => String(hashString(a.link || '')) === String(id));
         if (art && art.published) {
           const timeEl = card.querySelector('.feed-time');
           if (timeEl) timeEl.textContent = formatRelativeTime(art.published);
@@ -360,7 +376,8 @@
       allSourceCounts = {};
       articles.forEach(a => {
         totalDups += (a.other_sources || []).length;
-        allSourceCounts[a.source] = (allSourceCounts[a.source] || 0) + 1;
+        const s = a.source || "Unbekannt";
+        allSourceCounts[s] = (allSourceCounts[s] || 0) + 1;
       });
 
       const prefix = window.IS_ARCHIVE ? 'Archiv' : 'Alle';
@@ -376,16 +393,16 @@
 
       const readList = getStorage('read_news');
       document.getElementById('articles-container').innerHTML = articles.map(a => {
-        const id = hashString(a.link);
+        const id = hashString(a.link || '');
         const others = (a.other_sources && a.other_sources.length) ? `<span class="feed-others">• Auch bei: ${escapeHtml(a.other_sources.join(", "))}</span>` : '';
         const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" alt="Thumbnail" onerror="this.remove()">` : '';
         const isRead = readList.includes(String(id)) ? ' read' : '';
         return `
-          <article class="feed-card${isRead}" data-id="${id}" data-sources="${escapeHtml([a.source, ...(a.other_sources || [])].join(';;;'))}">
+          <article class="feed-card${isRead}" data-id="${id}" data-sources="${escapeHtml([a.source || '', ...(a.other_sources || [])].join(';;;'))}">
             <div class="feed-content">
-              <div class="feed-meta"><span class="feed-source">${escapeHtml(a.source)}</span><span class="feed-time">${formatRelativeTime(a.published)}</span>${others}</div>
-              <a class="feed-title" href="${escapeHtml(a.link)}" target="_blank" rel="noopener" onclick="markAsRead('${id}')">${escapeHtml(a.title)}</a>
-              <p class="feed-summary">${a.summary}</p>
+              <div class="feed-meta"><span class="feed-source">${escapeHtml(a.source || 'Quelle')}</span><span class="feed-time">${formatRelativeTime(a.published)}</span>${others}</div>
+              <a class="feed-title" href="${escapeHtml(a.link || '#')}" target="_blank" rel="noopener" onclick="markAsRead('${id}')">${escapeHtml(a.title || 'Ohne Titel')}</a>
+              <p class="feed-summary">${a.summary || ''}</p>
             </div>
             ${img}
           </article>
@@ -421,8 +438,8 @@
             dupMap[src].push({
               source: src,
               title: "Titel im Alt-Cache nicht separat erfasst",
-              link: a.link,
-              matched_with: a.title,
+              link: a.link || '#',
+              matched_with: a.title || '',
               is_legacy: true
             });
             totalDups++;
@@ -500,9 +517,7 @@
           body: JSON.stringify({ ref: 'main' })
         });
         if (res.status === 204) {
-          if (confirm('🚀 GitHub Action gestartet!
-
-Direkt zum Actions-Status wechseln?')) {
+          if (confirm('🚀 GitHub Action gestartet!\n\nDirekt zum Actions-Status wechseln?')) {
             window.open('https://github.com/schoerb/news-hub/actions', '_blank');
           }
         } else {
@@ -516,13 +531,13 @@ Direkt zum Actions-Status wechseln?')) {
         if (!rawEncryptedData) return false;
         if (rawEncryptedData.trim().startsWith('[')) {
           globalArticles = JSON.parse(rawEncryptedData);
-          onReady();
+          onDataLoaded();
           return true;
         }
         const dec = CryptoJS.AES.decrypt(rawEncryptedData, password).toString(CryptoJS.enc.Utf8);
         if (!dec || !dec.startsWith('[')) return false;
         globalArticles = JSON.parse(dec);
-        onReady();
+        onDataLoaded();
         return true;
       } catch (e) { return false; }
     }
@@ -530,8 +545,13 @@ Direkt zum Actions-Status wechseln?')) {
     async function init() {
       initTheme();
       initSidebarState();
+
       try {
         const r = await fetch('data.json');
+        if (!r.ok) {
+          document.getElementById('current-title').textContent = `Fehler: data.json nicht gefunden (${r.status})`;
+          return;
+        }
         rawEncryptedData = await r.text();
       } catch (e) {
         document.getElementById('current-title').textContent = "Fehler beim Laden von data.json";
@@ -540,7 +560,7 @@ Direkt zum Actions-Status wechseln?')) {
 
       if (rawEncryptedData.trim().startsWith('[')) {
         globalArticles = JSON.parse(rawEncryptedData);
-        onReady();
+        onDataLoaded();
         return;
       }
 
@@ -562,7 +582,7 @@ Direkt zum Actions-Status wechseln?')) {
       }
     }
 
-    function onReady() {
+    function onDataLoaded() {
       document.getElementById('auth-overlay').style.display = 'none';
       const now = Date.now();
       const cutoff24 = new Date(now - 24 * 3600 * 1000);
@@ -578,11 +598,14 @@ Direkt zum Actions-Status wechseln?')) {
         }
       });
 
+      if (!window.IS_ARCHIVE && liveArticles.length === 0 && globalArticles.length > 0) {
+        liveArticles = globalArticles;
+      }
+
       renderUI(liveArticles);
       initSeenObserver();
       initSmartHeader();
 
-      // Health Modal Liste mit genauen Status-Codes
       document.getElementById('health-list').innerHTML = feedHealthData.map(f => {
         const isOk = f.status === 'ok' || f.code === 304 || f.code === 200;
         const icon = isOk ? '🟢' : '🔴';
@@ -596,7 +619,6 @@ Direkt zum Actions-Status wechseln?')) {
       }).join('');
     }
 
-    // Automatische Aktualisierung beim Tab-Wechsel (z. B. Smartphone entsperren)
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         updateRelativeTimes();
