@@ -27,7 +27,7 @@ from urllib3.util import Retry
 # --- Konfiguration ---
 DEFAULT_PRIO = 1
 MAX_RETENTION_HOURS = 48
-MAX_DEDUP_TIME_WINDOW_HOURS = 20  # Artikel über 20h Differenz werden nicht gemerged
+MAX_DEDUP_TIME_WINDOW_HOURS = 20
 REMOTE_DATA_URL = "https://schoerb.github.io/news-hub/data.json"
 BERLIN_TZ = zoneinfo.ZoneInfo("Europe/Berlin")
 
@@ -338,7 +338,6 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
         match = None
         for idx, existing in enumerate(unique_list):
             ts_exist = existing.get("_ts", 0)
-            # Zeitfenster-Short-Circuit: Weit auseinander liegende News überspringen
             if ts_item and ts_exist and abs(ts_item - ts_exist) > max_time_diff:
                 continue
 
@@ -413,7 +412,6 @@ Artikel:
                     clean_sum = html.escape(raw_sum)
                     clean_sum = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", clean_sum)
                     
-                    # Expliziter Fallback falls die Zusammenfassung leer blieb
                     if not clean_sum:
                         clean_sum = html.escape(orig.get("summary", ""))[:180]
 
@@ -550,13 +548,13 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     .main { flex-grow: 1; overflow-y: auto; padding: 0; position: relative; }
     .stream-header {
-      position: sticky; top: 0; z-index: 50; background: rgba(18, 20, 24, 0.55);
+      position: sticky; top: 0; z-index: 50; background: rgba(18, 20, 24, 0.75);
       backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid var(--border);
       padding: 14px 36px; display: flex; justify-content: space-between; align-items: center; gap: 16px;
       transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .stream-header.header-hidden { transform: translateY(-100%); }
-    [data-theme="light"] .stream-header { background: rgba(248, 250, 252, 0.65); }
+    [data-theme="light"] .stream-header { background: rgba(248, 250, 252, 0.85); }
     .header-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
     .header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
     .header-title-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -575,16 +573,27 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       padding: 8px 14px; border-radius: 6px; font-size: 0.85rem; outline: none; width: 240px;
     }
 
-    .cards-grid { padding: 20px 36px calc(60px + env(safe-area-inset-bottom, 0px)); display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
+    .cards-grid { padding: 20px 36px calc(30px + env(safe-area-inset-bottom, 0px)); display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
     .feed-card {
       background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px;
-      display: flex; flex-direction: column; justify-content: space-between; transition: transform 0.15s, opacity 0.25s;
+      display: flex; flex-direction: column; justify-content: space-between; transition: transform 0.15s;
     }
     .feed-card:hover { transform: translateY(-2px); background: var(--card-hover); }
     .feed-card.selected { border-color: var(--focus-ring); box-shadow: 0 0 0 2px var(--focus-ring); }
-    .feed-card.seen { opacity: 0.72; }
-    .feed-card.read { opacity: 0.35 !important; }
-    .feed-card.read .feed-title { color: var(--text-muted) !important; }
+
+    /* Ungelesen-Punkt Indikator */
+    .unread-dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      background: var(--accent); box-shadow: 0 0 8px var(--accent);
+      flex-shrink: 0; transition: opacity 0.2s, background 0.2s;
+    }
+    .feed-card.seen .unread-dot {
+      background: var(--text-muted); box-shadow: none; opacity: 0.5;
+    }
+    .feed-card.read .unread-dot {
+      opacity: 0; pointer-events: none;
+    }
+
     .feed-meta { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; margin-bottom: 8px; flex-wrap: wrap; }
     .feed-source { color: var(--accent); font-weight: 600; }
     .feed-time, .feed-others { color: var(--text-muted); font-size: 0.72rem; }
@@ -594,28 +603,23 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .feed-summary strong { color: var(--text-bold); font-weight: 600; }
     .feed-thumb { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; margin-top: auto; }
 
-    .mobile-bottom-bar { display: none; }
     @media (max-width: 768px) {
       .sidebar { position: fixed; inset: 0 auto 0 0; transform: translateX(-100%); box-shadow: 4px 0 24px rgba(0,0,0,0.6); }
       .sidebar.open { transform: translateX(0); visibility: visible !important; width: 290px !important; }
       .sidebar-backdrop.open { display: block; }
       .sidebar-header h1 { font-size: 0.92rem; }
-      .stream-header { padding: 12px 14px; flex-direction: column; align-items: stretch; gap: 8px; }
-      .stream-header h2 { font-size: 1.1rem; white-space: normal; line-height: 1.3; }
-      .header-meta-inline { font-size: 0.82rem; }
-      .stream-header .menu-toggle, .stream-header .theme-toggle, .stream-header #refresh-btn { display: none !important; }
-      .header-right, .search-input { width: 100%; }
-      .cards-grid { grid-template-columns: 1fr; gap: 12px; padding: 12px 12px calc(96px + env(safe-area-inset-bottom, 0px)); }
-      .mobile-bottom-bar {
-        display: flex; position: fixed; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%);
-        background: rgba(26, 30, 36, 0.55); border: 1px solid var(--border); backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px); border-radius: 40px; padding: 6px 14px; gap: 12px; z-index: 105;
-        transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s;
+      .stream-header {
+        padding: 10px 12px 12px; flex-direction: column; align-items: stretch; gap: 10px;
       }
-      .mobile-bottom-bar.bar-hidden { transform: translate(-50%, 140%); opacity: 0; pointer-events: none; }
-      [data-theme="light"] .mobile-bottom-bar { background: rgba(255, 255, 255, 0.65); }
-      .bottom-btn { background: transparent; border: none; color: var(--text); font-size: 1.25rem; width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-      .bottom-btn:active { transform: scale(0.92); background: var(--accent-dim); }
+      .header-top-row {
+        display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%;
+      }
+      .header-left { gap: 10px; flex-grow: 1; min-width: 0; }
+      .stream-header h2 { font-size: 1.05rem; white-space: normal; line-height: 1.25; }
+      .header-meta-inline { font-size: 0.78rem; }
+      .header-right { width: 100%; }
+      .search-input { width: 100%; }
+      .cards-grid { grid-template-columns: 1fr; gap: 12px; padding: 12px 12px calc(40px + env(safe-area-inset-bottom, 0px)); }
     }
   </style>
 </head>
@@ -676,31 +680,28 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
   <main class="main">
     <div class="stream-header">
-      <div class="header-left">
-        <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
-        <div class="header-title-group">
-          <h2 id="current-title">Meldungen laden...</h2>
-          <div class="header-meta-inline">
-            <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()">🧹 Duplikate ℹ️</span>
-            __HEALTH_BLOCK__
+      <div class="header-top-row">
+        <div class="header-left">
+          <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+          <div class="header-title-group">
+            <h2 id="current-title">Meldungen laden...</h2>
+            <div class="header-meta-inline">
+              <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()">🧹 Duplikate ℹ️</span>
+              __HEALTH_BLOCK__
+            </div>
           </div>
+        </div>
+        <div class="header-actions-inline" style="display:flex; align-items:center; gap:8px;">
+          __DESKTOP_REFRESH_BTN__
+          <button class="theme-toggle" onclick="toggleTheme()">🌓</button>
         </div>
       </div>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Durchsuchen..." oninput="filterSearch(this.value)">
-        __DESKTOP_REFRESH_BTN__
-        <button class="theme-toggle" onclick="toggleTheme()">🌓</button>
       </div>
     </div>
     <div id="articles-container" class="cards-grid"></div>
   </main>
-
-  <nav class="mobile-bottom-bar" aria-label="Mobile Navigation">
-    <button class="bottom-btn" onclick="toggleSidebar()">☰</button>
-    <button class="bottom-btn" onclick="focusSearch()">🔍</button>
-    __MOBILE_REFRESH_BTN__
-    <button class="bottom-btn" onclick="toggleTheme()">🌓</button>
-  </nav>
 
   <script>
     window.IS_ARCHIVE = __IS_ARCHIVE__;
@@ -756,11 +757,9 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     function toggleSidebar() {
       const sb = document.getElementById('sidebar');
-      const bar = document.querySelector('.mobile-bottom-bar');
       if (window.innerWidth <= 768) {
-        const isOpen = sb.classList.toggle('open');
+        sb.classList.toggle('open');
         document.getElementById('backdrop').classList.toggle('open');
-        if (bar) bar.classList.toggle('bar-hidden', isOpen);
       } else {
         sb.classList.toggle('collapsed');
         localStorage.setItem('sidebar_closed', sb.classList.contains('collapsed'));
@@ -822,17 +821,15 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     }
 
     function initSmartHeader() {
-      const mainEl = document.querySelector('.main'), header = document.querySelector('.stream-header'), bar = document.querySelector('.mobile-bottom-bar');
+      const mainEl = document.querySelector('.main'), header = document.querySelector('.stream-header');
       let lastY = 0;
       mainEl.addEventListener('scroll', () => {
         const y = mainEl.scrollTop;
         if (Math.abs(lastY - y) <= 6 || document.activeElement === document.getElementById('search-box')) return;
         if (y > lastY && y > 50) {
           header.classList.add('header-hidden');
-          if (bar) bar.classList.remove('bar-hidden');
         } else if (y < lastY) {
           header.classList.remove('header-hidden');
-          if (bar) bar.classList.toggle('bar-hidden', y > 30);
         }
         lastY = y;
       }, { passive: true });
@@ -859,15 +856,26 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       `).join('');
 
       const readList = getStorage('read_news');
+      const seenList = getStorage('seen_news');
+
       document.getElementById('articles-container').innerHTML = articles.map(a => {
         const id = hashString(a.link || '');
         const others = (a.other_sources && a.other_sources.length) ? `<span class="feed-others">• Auch bei: ${escapeHtml(a.other_sources.join(", "))}</span>` : '';
         const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" alt="Thumbnail" onerror="this.remove()">` : '';
-        const isRead = readList.includes(String(id)) ? ' read' : '';
+        
+        let stateClass = '';
+        if (readList.includes(String(id))) stateClass += ' read';
+        if (seenList.includes(String(id))) stateClass += ' seen';
+
         return `
-          <article class="feed-card${isRead}" data-id="${id}" data-sources="${escapeHtml([a.source || '', ...(a.other_sources || [])].join(';;;'))}">
+          <article class="feed-card${stateClass}" data-id="${id}" data-sources="${escapeHtml([a.source || '', ...(a.other_sources || [])].join(';;;'))}">
             <div class="feed-content">
-              <div class="feed-meta"><span class="feed-source">${escapeHtml(a.source || 'Quelle')}</span><span class="feed-time">${formatRelativeTime(a.published)}</span>${others}</div>
+              <div class="feed-meta">
+                <span class="unread-dot" title="Ungelesen"></span>
+                <span class="feed-source">${escapeHtml(a.source || 'Quelle')}</span>
+                <span class="feed-time">${formatRelativeTime(a.published)}</span>
+                ${others}
+              </div>
               <a class="feed-title" href="${escapeHtml(a.link || '#')}" target="_blank" rel="noopener" onclick="markAsRead('${id}')">${escapeHtml(a.title || 'Ohne Titel')}</a>
               <p class="feed-summary">${a.summary || ''}</p>
             </div>
@@ -964,7 +972,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if (window.innerWidth <= 768) toggleSidebar();
     }
 
-    // Debounced Search
     function filterSearch(q) {
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(() => {
@@ -1152,7 +1159,6 @@ def render_page(feed_health, feeds, is_archive=False):
                          .replace("__NAV_TARGET_TEXT__", "← Zum Live-Feed" if is_archive else "📑 Zum Archiv (24–48h)") \
                          .replace("__MARK_ALL_BTN__", "" if is_archive else '<button class="mark-all-btn" onclick="markAllAsRead()">✓ Alle als gelesen markieren</button>') \
                          .replace("__DESKTOP_REFRESH_BTN__", "" if is_archive else '<button class="menu-toggle" id="refresh-btn" onclick="triggerWorkflow()">🔄</button>') \
-                         .replace("__MOBILE_REFRESH_BTN__", "" if is_archive else '<button class="bottom-btn" id="mobile-refresh-btn" onclick="triggerWorkflow()">🔄</button>') \
                          .replace("__NOW_STR__", now_str) \
                          .replace("__HEALTH_BLOCK__", health_text) \
                          .replace("__HEALTH_DATA__", json.dumps(feed_health, ensure_ascii=False)) \
