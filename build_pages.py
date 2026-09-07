@@ -547,33 +547,37 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .mark-all-btn { width: 100%; background: var(--border); color: var(--text); border: none; padding: 8px 12px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; }
 
     .main { flex-grow: 1; overflow-y: auto; padding: 0; position: relative; }
+    
+    /* Header Desktop: Alles in 1 Zeile */
     .stream-header {
       position: sticky; top: 0; z-index: 50; background: rgba(18, 20, 24, 0.75);
       backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid var(--border);
-      padding: 14px 36px; display: flex; justify-content: space-between; align-items: center; gap: 16px;
+      padding: 12px 28px; display: flex; justify-content: space-between; align-items: center; gap: 16px;
       transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .stream-header.header-hidden { transform: translateY(-100%); }
     [data-theme="light"] .stream-header { background: rgba(248, 250, 252, 0.85); }
-    .header-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
-    .header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-    .header-title-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-    .stream-header h2 { font-size: 1.3rem; font-weight: 700; color: var(--text-bold); white-space: nowrap; line-height: 1.25; }
-    .header-meta-inline { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text-muted); white-space: nowrap; }
+    
+    .header-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex-shrink: 0; }
+    .header-title-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .stream-header h2 { font-size: 1.15rem; font-weight: 700; color: var(--text-bold); white-space: nowrap; line-height: 1.2; }
+    .header-meta-inline { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; }
     .meta-sep { color: var(--border); }
     .meta-clickable { color: var(--accent); cursor: pointer; }
     .meta-clickable:hover { text-decoration: underline; }
 
+    .header-right { display: flex; align-items: center; gap: 8px; flex-grow: 1; justify-content: flex-end; max-width: 520px; }
+    .search-input {
+      background: var(--card-bg); border: 1px solid var(--border); color: var(--text);
+      padding: 8px 14px; border-radius: 6px; font-size: 0.85rem; outline: none; width: 100%; max-width: 320px;
+    }
+    .header-actions-group { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
     .theme-toggle, .menu-toggle {
       background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px;
       color: var(--text); font-size: 1.1rem; padding: 6px 10px; cursor: pointer;
     }
-    .search-input {
-      background: var(--card-bg); border: 1px solid var(--border); color: var(--text);
-      padding: 8px 14px; border-radius: 6px; font-size: 0.85rem; outline: none; width: 240px;
-    }
 
-    .cards-grid { padding: 20px 36px calc(30px + env(safe-area-inset-bottom, 0px)); display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
+    .cards-grid { padding: 20px 28px calc(30px + env(safe-area-inset-bottom, 0px)); display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
     .feed-card {
       background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px;
       display: flex; flex-direction: column; justify-content: space-between; transition: transform 0.15s;
@@ -610,23 +614,25 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .feed-summary strong { color: var(--text-bold); font-weight: 600; }
     .feed-thumb { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; margin-top: auto; }
 
+    /* Header Mobile: Exakt 2 Zeilen */
     @media (max-width: 768px) {
       .sidebar { position: fixed; inset: 0 auto 0 0; transform: translateX(-100%); box-shadow: 4px 0 24px rgba(0,0,0,0.6); }
       .sidebar.open { transform: translateX(0); visibility: visible !important; width: 290px !important; }
       .sidebar-backdrop.open { display: block; }
       .sidebar-header h1 { font-size: 0.92rem; }
+
       .stream-header {
-        padding: 10px 12px 12px; flex-direction: column; align-items: stretch; gap: 10px;
+        padding: 10px 14px 10px; flex-direction: column; align-items: stretch; gap: 8px;
       }
-      .header-top-row {
-        display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%;
+      .header-left { width: 100%; }
+      .stream-header h2 { font-size: 1.0rem; white-space: normal; line-height: 1.2; }
+      .header-meta-inline { font-size: 0.75rem; flex-wrap: wrap; }
+
+      .header-right {
+        width: 100%; max-width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px;
       }
-      .header-left { gap: 10px; flex-grow: 1; min-width: 0; }
-      .stream-header h2 { font-size: 1.05rem; white-space: normal; line-height: 1.25; }
-      .header-meta-inline { font-size: 0.78rem; }
-      .header-right { width: 100%; }
-      .search-input { width: 100%; }
-      .cards-grid { grid-template-columns: 1fr; gap: 12px; padding: 12px 12px calc(40px + env(safe-area-inset-bottom, 0px)); }
+      .search-input { width: 100%; max-width: 100%; flex-grow: 1; }
+      .cards-grid { grid-template-columns: 1fr; gap: 12px; padding: 12px 12px calc(30px + env(safe-area-inset-bottom, 0px)); }
     }
   </style>
 </head>
@@ -687,24 +693,22 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
   <main class="main">
     <div class="stream-header">
-      <div class="header-top-row">
-        <div class="header-left">
-          <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
-          <div class="header-title-group">
-            <h2 id="current-title">Meldungen laden...</h2>
-            <div class="header-meta-inline">
-              <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()">🧹 Duplikate</span>
-              __HEALTH_BLOCK__
-            </div>
+      <div class="header-left">
+        <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+        <div class="header-title-group">
+          <h2 id="current-title">Meldungen laden...</h2>
+          <div class="header-meta-inline">
+            <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()">🧹 Duplikate</span>
+            __HEALTH_BLOCK__
           </div>
-        </div>
-        <div class="header-actions-inline" style="display:flex; align-items:center; gap:8px;">
-          __DESKTOP_REFRESH_BTN__
-          <button class="theme-toggle" onclick="toggleTheme()">🌓</button>
         </div>
       </div>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Durchsuchen..." oninput="filterSearch(this.value)">
+        <div class="header-actions-group">
+          __DESKTOP_REFRESH_BTN__
+          <button class="theme-toggle" onclick="toggleTheme()">🌓</button>
+        </div>
       </div>
     </div>
     <div id="articles-container" class="cards-grid"></div>
@@ -1024,7 +1028,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           body: JSON.stringify({ ref: 'main' })
         });
         if (res.status === 204) {
-          if (confirm('🚀 GitHub Action gestartet!\\n\\nDirekt zum Actions-Status wechseln?')) {
+          if (confirm('🚀 GitHub Action gestartet!\n\nDirekt zum Actions-Status wechseln?')) {
             window.open('https://github.com/schoerb/news-hub/actions', '_blank');
           }
         } else {
@@ -1163,8 +1167,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
 
 def render_page(feed_health, feeds, is_archive=False):
-    # Formatiert als "07.09. 12:36" (ohne Jahreszahl und Komma)
-    now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m. %H:%M")
+    # Formatiert als "07.09.2026 13:29" (mit vollständiger Jahreszahl)
+    now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y %H:%M")
     ok_feeds = sum(1 for h in feed_health if h["status"] == "ok" or h["code"] in (200, 304))
     failed_count = len(feed_health) - ok_feeds
 
