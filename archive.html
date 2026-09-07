@@ -1,230 +1,114 @@
 <!DOCTYPE html>
 <html lang="de" data-theme="dark">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>Archiv</title>
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#121418">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
   <style>
-    :root {
-      --bg: #121418; --sidebar-bg: #181b20; --card-bg: #1e2229; --card-hover: #262b34;
-      --border: #2e3440; --text: #e2e8f0; --text-muted: #94a3b8; --text-bold: #f1f5f9;
-      --accent: #2ecc71; --accent-dim: rgba(46, 204, 113, 0.15); --link: #60a5fa; --focus-ring: #3b82f6;
-    }
-    [data-theme="light"] {
-      --bg: #f8fafc; --sidebar-bg: #ffffff; --card-bg: #ffffff; --card-hover: #f1f5f9;
-      --border: #e2e8f0; --text: #1e293b; --text-muted: #64748b; --text-bold: #0f172a;
-      --accent: #16a34a; --accent-dim: rgba(22, 163, 74, 0.12); --link: #2563eb; --focus-ring: #2563eb;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'Inter', -apple-system, sans-serif; background-color: var(--bg);
-      color: var(--text); display: flex; height: 100vh; overflow: hidden;
-    }
-
-    #auth-overlay {
-      position: fixed; inset: 0; background: var(--bg);
-      display: none; align-items: center; justify-content: center; z-index: 2000; padding: 16px;
-    }
-    .auth-card {
-      background: var(--sidebar-bg); border: 1px solid var(--border); border-radius: 12px;
-      padding: 32px 28px; width: 100%; max-width: 380px; text-align: center; box-shadow: 0 16px 36px rgba(0,0,0,0.3);
-    }
-    .auth-card h2 { font-size: 1.3rem; margin-bottom: 8px; color: var(--text-bold); }
-    .auth-card p { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 20px; }
-    .auth-input {
-      width: 100%; background: var(--card-bg); border: 1px solid var(--border); color: var(--text);
-      padding: 12px 14px; border-radius: 6px; font-size: 0.95rem; margin-bottom: 14px; outline: none;
-    }
-    .auth-input:focus { border-color: var(--accent); }
-    .auth-btn { width: 100%; background: var(--accent); color: #fff; border: none; padding: 12px; border-radius: 6px; font-weight: 600; cursor: pointer; }
-    .auth-error { color: #ef4444; font-size: 0.8rem; margin-top: 10px; display: none; }
-
-    .modal-overlay {
-      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75);
-      backdrop-filter: blur(2px); z-index: 1100; align-items: center; justify-content: center; padding: 16px;
-    }
-    .modal-card {
-      background: var(--sidebar-bg); border: 1px solid var(--border); border-radius: 12px;
-      padding: 24px; width: 100%; max-width: 540px; max-height: 80vh; display: flex; flex-direction: column;
-      box-shadow: 0 16px 36px rgba(0,0,0,0.3);
-    }
-    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
-    .modal-header h2 { font-size: 1.15rem; color: var(--text-bold); }
-    .modal-body { overflow-y: auto; flex-grow: 1; font-size: 0.88rem; }
-    .modal-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); gap: 12px; }
-    .modal-close-btn { width: 100%; background: var(--accent); color: #fff; border: none; padding: 12px; border-radius: 6px; font-weight: 600; cursor: pointer; margin-top: 16px; }
-    
-    .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); z-index: 110; }
-    .sidebar {
-      width: 290px; background: var(--sidebar-bg); border-right: 1px solid var(--border);
-      display: flex; flex-direction: column; flex-shrink: 0; z-index: 120;
-      transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      overflow: hidden; white-space: nowrap;
-    }
-    .sidebar.collapsed { width: 0 !important; border-right: none !important; visibility: hidden; }
-    .sidebar-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; min-width: 290px; }
-    .sidebar-header h1 { font-size: 0.98rem; font-weight: 700; color: var(--text-bold); letter-spacing: 0.01em; }
-    .close-btn { background: none; border: none; color: var(--text-muted); font-size: 1.4rem; cursor: pointer; }
-    .source-list { list-style: none; padding: 12px; overflow-y: auto; flex-grow: 1; min-width: 290px; }
-    .source-btn {
-      width: 100%; text-align: left; padding: 10px 14px; margin-bottom: 4px; border-radius: 6px;
-      background: transparent; border: none; color: var(--text-muted); font-size: 0.85rem; font-weight: 500;
-      cursor: pointer; display: flex; justify-content: space-between; align-items: center;
-    }
-    .source-btn:hover, .source-btn.active { background: var(--accent-dim); color: var(--accent); font-weight: 600; }
-    .badge { background: var(--border); padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; color: var(--text); }
-    .source-btn.active .badge { background: var(--accent); color: #fff; }
-    .sidebar-footer { padding: 16px; border-top: 1px solid var(--border); min-width: 290px; }
-    .nav-link-btn { display: block; text-align: center; color: var(--accent); text-decoration: none; font-size: 0.82rem; font-weight: 600; padding: 8px; border-radius: 6px; background: var(--accent-dim); margin-bottom: 8px; }
-    .mark-all-btn { width: 100%; background: var(--border); color: var(--text); border: none; padding: 8px 12px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; }
-
-    .main { flex-grow: 1; overflow-y: auto; padding: 0; position: relative; }
-    
-    /* Header Desktop: Alles in 1 Zeile */
-    .stream-header {
-      position: sticky; top: 0; z-index: 50; background: rgba(18, 20, 24, 0.75);
-      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid var(--border);
-      padding: 12px 28px; display: flex; justify-content: space-between; align-items: center; gap: 16px;
-      transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .stream-header.header-hidden { transform: translateY(-100%); }
-    [data-theme="light"] .stream-header { background: rgba(248, 250, 252, 0.85); }
-    
-    .header-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex-shrink: 0; }
-    .header-title-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-    .stream-header h2 { font-size: 1.15rem; font-weight: 700; color: var(--text-bold); white-space: nowrap; line-height: 1.2; }
-    .header-meta-inline { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; }
-    .meta-sep { color: var(--border); }
-    .meta-clickable { color: var(--accent); cursor: pointer; }
-    .meta-clickable:hover { text-decoration: underline; }
-
-    .header-right { display: flex; align-items: center; gap: 8px; flex-grow: 1; justify-content: flex-end; max-width: 520px; }
-    .search-input {
-      background: var(--card-bg); border: 1px solid var(--border); color: var(--text);
-      padding: 8px 14px; border-radius: 6px; font-size: 0.85rem; outline: none; width: 100%; max-width: 320px;
-    }
-    .header-actions-group { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-    .theme-toggle, .menu-toggle {
-      background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px;
-      color: var(--text); font-size: 1.1rem; padding: 6px 10px; cursor: pointer;
-    }
-
-    .cards-grid { padding: 20px 28px calc(30px + env(safe-area-inset-bottom, 0px)); display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
-    .feed-card {
-      background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px;
-      display: flex; flex-direction: column; justify-content: space-between; transition: transform 0.15s;
-    }
-    .feed-card:hover { transform: translateY(-2px); background: var(--card-hover); }
-    .feed-card.selected { border-color: var(--focus-ring); box-shadow: 0 0 0 2px var(--focus-ring); }
-
-    /* Interaktiver Ungelesen-Punkt Indikator */
-    .unread-dot-btn {
-      background: none; border: none; padding: 0; margin: 0; cursor: pointer;
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 20px; height: 20px; border-radius: 50%;
-    }
-    .unread-dot {
-      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-      background: var(--accent); box-shadow: 0 0 8px var(--accent);
-      flex-shrink: 0; transition: opacity 0.2s, background 0.2s, transform 0.15s;
-    }
-    .unread-dot-btn:hover .unread-dot { transform: scale(1.3); }
-    .feed-card.seen .unread-dot {
-      background: var(--text-muted); box-shadow: none; opacity: 0.55;
-    }
-    .feed-card.read .unread-dot {
-      background: transparent; box-shadow: none; border: 1.5px solid var(--text-muted); opacity: 0.35;
-    }
-    .feed-card.read .feed-title { color: var(--text-muted); }
-
-    .feed-meta { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; margin-bottom: 8px; flex-wrap: wrap; }
-    .feed-source { color: var(--accent); font-weight: 600; }
-    .feed-time, .feed-others { color: var(--text-muted); font-size: 0.72rem; }
-    .feed-title { font-size: 1.05rem; font-weight: 600; color: var(--text-bold); text-decoration: none; line-height: 1.4; margin-bottom: 8px; }
-    .feed-title:hover { color: var(--link); text-decoration: underline; }
-    .feed-summary { font-size: 0.88rem; color: var(--text-muted); line-height: 1.5; margin-bottom: 14px; }
-    .feed-summary strong { color: var(--text-bold); font-weight: 600; }
-    .feed-thumb { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; margin-top: auto; }
-
-    /* Header Mobile: Exakt 2 Zeilen */
-    @media (max-width: 768px) {
-      .sidebar { position: fixed; inset: 0 auto 0 0; transform: translateX(-100%); box-shadow: 4px 0 24px rgba(0,0,0,0.6); }
-      .sidebar.open { transform: translateX(0); visibility: visible !important; width: 290px !important; }
-      .sidebar-backdrop.open { display: block; }
-      .sidebar-header h1 { font-size: 0.92rem; }
-
-      .stream-header {
-        padding: 10px 14px 10px; flex-direction: column; align-items: stretch; gap: 8px;
-      }
-      .header-left { width: 100%; }
-      .stream-header h2 { font-size: 1.0rem; white-space: normal; line-height: 1.2; }
-      .header-meta-inline { font-size: 0.75rem; flex-wrap: wrap; }
-
-      .header-right {
-        width: 100%; max-width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px;
-      }
-      .search-input { width: 100%; max-width: 100%; flex-grow: 1; }
-      .cards-grid { grid-template-columns: 1fr; gap: 12px; padding: 12px 12px calc(30px + env(safe-area-inset-bottom, 0px)); }
+    :root{--bg:#121418;--sidebar:#181b20;--card:#1e2229;--hover:#262b34;--border:#2e3440;--text:#e2e8f0;--muted:#94a3b8;--bold:#f1f5f9;--accent:#2ecc71;--accent-dim:rgba(46,204,113,.15);--link:#60a5fa}
+    [data-theme="light"]{--bg:#f8fafc;--sidebar:#fff;--card:#fff;--hover:#f1f5f9;--border:#e2e8f0;--text:#1e293b;--muted:#64748b;--bold:#0f172a;--accent:#16a34a;--accent-dim:rgba(22,163,74,.12);--link:#2563eb}
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;height:100vh;overflow:hidden}
+    .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(2px);z-index:1100;align-items:center;justify-content:center;padding:16px}
+    .modal-card{background:var(--sidebar);border:1px solid var(--border);border-radius:12px;padding:24px;width:100%;max-width:540px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 16px 36px rgba(0,0,0,.3)}
+    .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px}
+    .modal-body{overflow-y:auto;flex-grow:1;font-size:.88rem}
+    .modal-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:12px}
+    .btn{background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:1.05rem;padding:6px 10px;cursor:pointer}
+    .btn-action{width:100%;background:var(--accent);color:#fff;border:none;padding:12px;border-radius:6px;font-weight:600;cursor:pointer;margin-top:14px}
+    .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:110}
+    .sidebar{width:290px;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;z-index:120;transition:all .25s ease;overflow:hidden;white-space:nowrap}
+    .sidebar.collapsed{width:0!important;border:none!important;visibility:hidden}
+    .sidebar-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+    .source-list{list-style:none;padding:12px;overflow-y:auto;flex-grow:1}
+    .source-btn{width:100%;text-align:left;padding:10px 14px;margin-bottom:4px;border-radius:6px;background:transparent;border:none;color:var(--muted);font-size:.85rem;font-weight:500;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+    .source-btn:hover,.source-btn.active{background:var(--accent-dim);color:var(--accent);font-weight:600}
+    .badge{background:var(--border);padding:2px 8px;border-radius:12px;font-size:.7rem;color:var(--text)}
+    .source-btn.active .badge{background:var(--accent);color:#fff}
+    .sidebar-footer{padding:16px;border-top:1px solid var(--border)}
+    .nav-link{display:block;text-align:center;color:var(--accent);text-decoration:none;font-size:.82rem;font-weight:600;padding:8px;border-radius:6px;background:var(--accent-dim);margin-bottom:8px}
+    .main{flex-grow:1;overflow-y:auto;position:relative}
+    .stream-header{position:sticky;top:0;z-index:50;background:rgba(18,20,24,.85);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:12px 28px;display:flex;justify-content:space-between;align-items:center;gap:16px;transition:transform .28s ease}
+    .stream-header.header-hidden{transform:translateY(-100%)}
+    [data-theme="light"] .stream-header{background:rgba(248,250,252,.88)}
+    .header-left{display:flex;align-items:center;gap:12px;flex-shrink:0;min-width:0}
+    .header-title-group{display:flex;flex-direction:column;gap:2px}
+    .stream-header h2{font-size:1.15rem;font-weight:700;color:var(--bold);white-space:nowrap}
+    .header-meta{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap}
+    .header-right{display:flex;align-items:center;gap:8px;flex-grow:1;justify-content:flex-end;max-width:520px}
+    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:6px;font-size:.85rem;outline:none;width:100%;max-width:320px}
+    .cards-grid{padding:20px 28px calc(30px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:18px}
+    .feed-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px;display:flex;flex-direction:column;justify-content:space-between;transition:transform .15s}
+    .feed-card:hover{transform:translateY(-2px);background:var(--hover)}
+    .unread-dot-btn{background:none;border:none;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px}
+    .unread-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);transition:all .2s}
+    .feed-card.seen .unread-dot{background:var(--muted);box-shadow:none;opacity:.55}
+    .feed-card.read .unread-dot{background:transparent;box-shadow:none;border:1.5px solid var(--muted);opacity:.35}
+    .feed-card.read .feed-title{color:var(--muted)}
+    .feed-meta{display:flex;align-items:center;gap:6px;font-size:.75rem;margin-bottom:8px;flex-wrap:wrap}
+    .feed-source{color:var(--accent);font-weight:600}
+    .feed-time,.feed-others{color:var(--muted);font-size:.72rem}
+    .feed-title{font-size:1.05rem;font-weight:600;color:var(--bold);text-decoration:none;line-height:1.4;margin-bottom:8px}
+    .feed-title:hover{color:var(--link);text-decoration:underline}
+    .feed-summary{font-size:.88rem;color:var(--muted);line-height:1.5;margin-bottom:14px}
+    .feed-summary strong{color:var(--bold);font-weight:600}
+    .feed-thumb{width:100%;height:160px;object-fit:cover;border-radius:6px;margin-top:auto}
+    .meta-clickable{color:var(--accent);cursor:pointer}
+    .meta-clickable:hover{text-decoration:underline}
+    @media (max-width:768px){
+      .sidebar{position:fixed;inset:0 auto 0 0;transform:translateX(-100%);box-shadow:4px 0 24px rgba(0,0,0,.6)}
+      .sidebar.open{transform:translateX(0);visibility:visible!important;width:290px!important}
+      .sidebar-backdrop.open{display:block}
+      .stream-header{padding:10px 14px;flex-direction:column;align-items:stretch;gap:8px}
+      .header-left{width:100%}
+      .stream-header h2{font-size:1rem;white-space:normal}
+      .header-meta{font-size:.75rem;flex-wrap:wrap}
+      .header-right{width:100%;max-width:100%;display:flex;gap:8px}
+      .search-input{max-width:100%}
+      .cards-grid{grid-template-columns:1fr;gap:12px;padding:12px 12px calc(30px + env(safe-area-inset-bottom,0px))}
     }
   </style>
 </head>
 <body>
-  <div id="auth-overlay">
-    <div class="auth-card">
-      <h2>🔐 Geschützter Feed Hub</h2>
-      <p>Bitte Passwort eingeben, um die Artikel zu entschlüsseln.</p>
-      <input type="password" id="auth-password" class="auth-input" placeholder="Passwort..." onkeydown="if(event.key==='Enter') submitAuth()">
-      <button class="auth-btn" onclick="submitAuth()">Entschlüsseln</button>
-      <div id="auth-error" class="auth-error">Ungültiges Passwort!</div>
+  <div id="auth-overlay" class="modal-overlay" style="z-index:2000">
+    <div class="modal-card" style="max-width:380px;text-align:center">
+      <h2 style="margin-bottom:8px">🔐 Geschützt</h2>
+      <input type="password" id="auth-pwd" class="search-input" style="max-width:100%;margin-bottom:12px" placeholder="Passwort..." onkeydown="if(event.key==='Enter')submitAuth()">
+      <button class="btn-action" style="margin-top:0" onclick="submitAuth()">Entschlüsseln</button>
+      <div id="auth-err" style="color:#ef4444;font-size:.8rem;margin-top:8px;display:none">Ungültiges Passwort!</div>
     </div>
   </div>
 
   <div id="health-modal" class="modal-overlay">
     <div class="modal-card">
-      <div class="modal-header"><h2>📡 Feed-Status Details</h2><button class="close-btn" onclick="toggleModal('health-modal', false)">&times;</button></div>
+      <div class="modal-header"><h2>📡 Feed-Status</h2><button class="btn" onclick="toggleModal('health-modal',false)">&times;</button></div>
       <div class="modal-body">
-        <div style="margin-bottom:12px; padding:10px 14px; background:var(--card-bg); border:1px solid var(--border); border-radius:8px; font-size:0.85rem;">
-          <a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" style="color:var(--link); text-decoration:none; display:flex; align-items:center; justify-content:space-between; font-weight:500;">
-            <span>⚙️ GitHub Actions Workflow-Status</span>
-            <span>↗</span>
-          </a>
+        <div style="margin-bottom:12px;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:6px">
+          <a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" style="color:var(--link);text-decoration:none;display:flex;justify-content:space-between"><span>⚙️ Workflow-Status</span><span>↗</span></a>
         </div>
         <div id="health-list"></div>
       </div>
-      <button class="modal-close-btn" onclick="toggleModal('health-modal', false)">Schließen</button>
+      <button class="btn-action" onclick="toggleModal('health-modal',false)">Schließen</button>
     </div>
   </div>
 
-  <div id="duplicate-modal" class="modal-overlay">
+  <div id="dup-modal" class="modal-overlay">
     <div class="modal-card">
-      <div class="modal-header">
-        <h2>🧹 Bereinigte Duplikate nach Quelle</h2>
-        <button class="close-btn" onclick="toggleModal('duplicate-modal', false)">&times;</button>
-      </div>
-      <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:12px;">
-        Klicke auf eine Quelle, um die verworfenen Artikel und deren Zuordnung anzuzeigen:
-      </p>
-      <div id="duplicate-list" class="modal-body"></div>
-      <button class="modal-close-btn" onclick="toggleModal('duplicate-modal', false)">Schließen</button>
+      <div class="modal-header"><h2>🧹 Bereinigte Duplikate</h2><button class="btn" onclick="toggleModal('dup-modal',false)">&times;</button></div>
+      <div id="dup-list" class="modal-body"></div>
+      <button class="btn-action" onclick="toggleModal('dup-modal',false)">Schließen</button>
     </div>
   </div>
 
   <div class="sidebar-backdrop" id="backdrop" onclick="toggleSidebar()"></div>
-
   <aside class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-      <h1>⚡ Archiv (24–48h)</h1>
-      <button class="close-btn" onclick="toggleSidebar()">&times;</button>
-    </div>
+    <div class="sidebar-header"><h1>⚡ Archiv (24–48h)</h1><button class="btn" onclick="toggleSidebar()">&times;</button></div>
     <ul class="source-list" id="source-list"></ul>
     <div class="sidebar-footer">
-      <a href="index.html" class="nav-link-btn">← Zum Live-Feed</a>
+      <a href="index.html" class="nav-link">← Zum Live-Feed</a>
       
     </div>
   </aside>
@@ -232,20 +116,20 @@
   <main class="main">
     <div class="stream-header">
       <div class="header-left">
-        <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+        <button class="btn" onclick="toggleSidebar()">☰</button>
         <div class="header-title-group">
           <h2 id="current-title">Meldungen laden...</h2>
-          <div class="header-meta-inline">
-            <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()">🧹 Duplikate</span>
-            <span class="meta-sep">•</span><span style="color:#eab308; cursor:pointer;" onclick="toggleModal('health-modal', true)" title="Klicken für Fehlerdetails">🟡 20/22 Feeds (2 gestört)</span>
+          <div class="header-meta">
+            <span class="meta-clickable" id="header-dup-info" onclick="openDupModal()">🧹 Duplikate</span>
+            <span style="color:#eab308;cursor:pointer" onclick="toggleModal('health-modal',true)">🟡 21/22 Feeds (1 gestört)</span>
           </div>
         </div>
       </div>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Durchsuchen..." oninput="filterSearch(this.value)">
-        <div class="header-actions-group">
+        <div style="display:flex;gap:8px">
           
-          <button class="theme-toggle" onclick="toggleTheme()">🌓</button>
+          <button class="btn" onclick="toggleTheme()">🌓</button>
         </div>
       </div>
     </div>
@@ -254,449 +138,215 @@
 
   <script>
     window.IS_ARCHIVE = true;
-    const configuredSources = ["ComputerBase", "OMG! Ubuntu!", "9to5Google", "Topthemen - SZ.de", "WinFuture News", "GoogleWatchBlog", "mobiFlip", "Android Headlines", "Android Police", "teltarif.de", "Düsseldorf | RP ONLINE", "Caschys Blog", "Notebookcheck.com", "Deskmodder.de", "heise online News", "Android Authority", "XDA", "Travel-Dealz.de", "SmartDroid.de", "Aktuell - FAZ.NET", "Android Sage", "9to5Linux"];
-    const feedHealthData = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 200}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 200}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 200}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "exception", "code": "timeout/conn"}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 200}, {"title": "SmartDroid.de", "status": "ok", "code": 200}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 200}, {"title": "9to5Linux", "status": "exception", "code": "timeout/conn"}];
-    const buildTimestampStr = "07.09.2026 13:39";
+    const configuredSources = ["ComputerBase", "OMG! Ubuntu!", "9to5Google", "Topthemen - SZ.de", "WinFuture News", "GoogleWatchBlog", "mobiFlip", "Android Headlines", "Android Police", "teltarif.de", "Düsseldorf | RP ONLINE", "Caschys Blog", "Notebookcheck.com", "Deskmodder.de", "heise online News", "Android Authority", "XDA", "Travel-Dealz.de", "SmartDroid.de", "Aktuell - FAZ.NET", "Android Sage", "9to5Linux"], feedHealth = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 200}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 200}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 200}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "ok", "code": 200}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 200}, {"title": "SmartDroid.de", "status": "ok", "code": 200}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 200}, {"title": "9to5Linux", "status": "exception", "code": "timeout"}], buildTime = "07.09.2026 14:10";
+    let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', sIndex = -1, sTimer = null;
 
-    let rawEncryptedData = "", globalArticles = [], liveArticles = [], allSourceCounts = {};
-    let activeSource = 'all', searchQuery = '', selectedIndex = -1;
-    let searchDebounceTimer = null;
+    const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const hStr = s => { let h = 0; for(let i=0;i<(s||'').length;i++){ h = ((h<<5)-h)+s.charCodeAt(i); h |= 0; } return Math.abs(h); };
+    const relTime = d => {
+      if(!d) return ''; const diff = Math.floor((Date.now() - new Date(d))/1000);
+      if(isNaN(diff)) return ''; if(diff < 60) return '• gerade'; if(diff < 3600) return `• vor ${Math.floor(diff/60)}m`;
+      if(diff < 86400) return `• vor ${Math.floor(diff/3600)}h`; return `• vor ${Math.floor(diff/86400)}d`;
+    };
 
-    function escapeHtml(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-    function hashString(str) { str = str || ''; let h = 0; for (let i = 0; i < str.length; i++) { h = ((h << 5) - h) + str.charCodeAt(i); h |= 0; } return Math.abs(h); }
-
-    function formatRelativeTime(isoStr) {
-      if (!isoStr) return '';
-      const diff = Math.floor((new Date() - new Date(isoStr)) / 1000);
-      if (isNaN(diff)) return '';
-      if (diff < 60) return '• gerade eben';
-      if (diff < 3600) return `• vor ${Math.floor(diff / 60)}m`;
-      if (diff < 86400) return `• vor ${Math.floor(diff / 3600)}h`;
-      return `• vor ${Math.floor(diff / 86400)}d`;
-    }
-
-    function updateRelativeTimes() {
-      document.querySelectorAll('.feed-card').forEach(card => {
-        const id = card.dataset.id;
-        const art = liveArticles.find(a => String(hashString(a.link || '')) === String(id));
-        if (art && art.published) {
-          const timeEl = card.querySelector('.feed-time');
-          if (timeEl) timeEl.textContent = formatRelativeTime(art.published);
-        }
-      });
-    }
-
-    function initTheme() {
-      const t = localStorage.getItem('hub_theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
-      document.documentElement.setAttribute('data-theme', t);
-    }
-    function toggleTheme() {
-      const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', next);
-      localStorage.setItem('hub_theme', next);
-    }
-
-    function initSidebarState() {
-      if (window.innerWidth > 768) {
-        if (localStorage.getItem('sidebar_closed') === 'true') {
-          document.getElementById('sidebar').classList.add('collapsed');
-        }
-      }
-    }
-
-    function toggleSidebar() {
+    function initTheme(){ document.documentElement.setAttribute('data-theme', localStorage.getItem('hub_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')); }
+    function toggleTheme(){ const t = document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark'; document.documentElement.setAttribute('data-theme',t); localStorage.setItem('hub_theme',t); }
+    function toggleSidebar(){
       const sb = document.getElementById('sidebar');
-      if (window.innerWidth <= 768) {
-        sb.classList.toggle('open');
-        document.getElementById('backdrop').classList.toggle('open');
-      } else {
-        sb.classList.toggle('collapsed');
-        localStorage.setItem('sidebar_closed', sb.classList.contains('collapsed'));
-      }
+      if(window.innerWidth<=768){ sb.classList.toggle('open'); document.getElementById('backdrop').classList.toggle('open'); }
+      else { sb.classList.toggle('collapsed'); localStorage.setItem('sidebar_closed', sb.classList.contains('collapsed')); }
     }
-    function focusSearch() { const el = document.getElementById('search-box'); if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth' }); } }
-    function toggleModal(id, open) { document.getElementById(id).style.display = open ? 'flex' : 'none'; }
+    function toggleModal(id, o){ const el = document.getElementById(id); if(el) el.style.display = o ? 'flex':'none'; }
+    const getStorage = k => { try { return JSON.parse(localStorage.getItem(k)||'[]'); } catch(e){ return []; } };
+    const setStorage = (k,v) => { try { localStorage.setItem(k, JSON.stringify(v.slice(-1000))); } catch(e){} };
 
-    function getStorage(k) { try { return JSON.parse(localStorage.getItem(k) || '[]'); } catch(e) { return []; } }
-    function setStorage(k, val) { localStorage.setItem(k, JSON.stringify(val.slice(-1000))); }
-
-    function markAsRead(id) {
+    function toggleRead(id){
+      let r = getStorage('read_news'); const idx = r.indexOf(id);
+      const el = document.querySelector(`.feed-card[data-id="${id}"]`);
+      if(idx>=0){ r.splice(idx,1); if(el) el.classList.remove('read'); } else { r.push(id); if(el) el.classList.add('read'); }
+      setStorage('read_news', r);
+    }
+    function markAllRead(){
       const r = getStorage('read_news');
-      if (!r.includes(id)) { r.push(id); setStorage('read_news', r); }
-      const el = document.querySelector(`.feed-card[data-id="${id}"]`);
-      if (el) el.classList.add('read');
-    }
-
-    function toggleRead(id) {
-      let r = getStorage('read_news');
-      const idx = r.indexOf(id);
-      const el = document.querySelector(`.feed-card[data-id="${id}"]`);
-      if (idx >= 0) {
-        r.splice(idx, 1);
-        if (el) el.classList.remove('read');
-      } else {
-        r.push(id);
-        if (el) el.classList.add('read');
-      }
+      document.querySelectorAll('.feed-card').forEach(c => { c.classList.add('read'); if(!r.includes(c.dataset.id)) r.push(c.dataset.id); });
       setStorage('read_news', r);
     }
 
-    function markAllAsRead() {
-      const r = getStorage('read_news');
-      document.querySelectorAll('.feed-card').forEach(c => {
-        c.classList.add('read');
-        if (!r.includes(c.dataset.id)) r.push(c.dataset.id);
-      });
-      setStorage('read_news', r);
-    }
+    function renderUI(articles){
+      let totalDups = 0; counts = {};
+      articles.forEach(a => { totalDups += (a.other_sources||[]).length; counts[a.source||"Unbekannt"] = (counts[a.source||"Unbekannt"]||0) + 1; });
+      const tEl = document.getElementById('current-title');
+      if(tEl) tEl.textContent = window.IS_ARCHIVE ? `Archiv: ${articles.length} News bis ${buildTime}` : `${articles.length} News bis ${buildTime}`;
+      const dEl = document.getElementById('header-dup-info'); if(dEl) dEl.innerHTML = `🧹 ${totalDups} Duplikate`;
 
-    function cleanupStorage(articles) {
-      const validIds = new Set(articles.map(a => String(hashString(a.link || ''))));
-      const cleanRead = getStorage('read_news').filter(id => validIds.has(id));
-      const cleanSeen = getStorage('seen_news').filter(id => validIds.has(id));
-      setStorage('read_news', cleanRead);
-      setStorage('seen_news', cleanSeen);
-    }
+      const sorted = Array.from(new Set([...configuredSources, ...Object.keys(counts)])).sort((a,b)=>(counts[b]||0)-(counts[a]||0));
+      document.getElementById('source-list').innerHTML = `<li><button class="source-btn active" onclick="filterSource('all',this)"><span>Alle</span><span class="badge">${articles.length}</span></button></li>` +
+        sorted.map(s => `<li><button class="source-btn" onclick="filterSource('${esc(s)}',this)"><span>${esc(s)}</span><span class="badge">${counts[s]||0}</span></button></li>`).join('');
 
-    function initSeenObserver() {
-      const seen = getStorage('seen_news');
-      seen.forEach(id => { const el = document.querySelector(`.feed-card[data-id="${id}"]`); if (el) el.classList.add('seen'); });
-      const timers = new Map();
-      const observer = new IntersectionObserver((entries) => {
-        entries.forEach(e => {
-          const id = e.target.dataset.id;
-          if (!id) return;
-          if (e.isIntersecting) {
-            timers.set(id, setTimeout(() => {
-              const s = getStorage('seen_news');
-              if (!s.includes(id)) { s.push(id); setStorage('seen_news', s); }
-              e.target.classList.add('seen');
-              observer.unobserve(e.target);
-            }, 1000));
-          } else if (timers.has(id)) {
-            clearTimeout(timers.get(id));
-            timers.delete(id);
-          }
-        });
-      }, { root: document.querySelector('.main'), threshold: 0.6 });
-
-      document.querySelectorAll('.feed-card:not(.seen)').forEach(c => observer.observe(c));
-    }
-
-    function initSmartHeader() {
-      const mainEl = document.querySelector('.main'), header = document.querySelector('.stream-header');
-      let lastY = 0;
-      mainEl.addEventListener('scroll', () => {
-        const y = mainEl.scrollTop;
-        if (Math.abs(lastY - y) <= 6 || document.activeElement === document.getElementById('search-box')) return;
-        if (y > lastY && y > 50) {
-          header.classList.add('header-hidden');
-        } else if (y < lastY) {
-          header.classList.remove('header-hidden');
-        }
-        lastY = y;
-      }, { passive: true });
-    }
-
-    function renderUI(articles) {
-      let totalDups = 0;
-      allSourceCounts = {};
-      articles.forEach(a => {
-        totalDups += (a.other_sources || []).length;
-        const s = a.source || "Unbekannt";
-        allSourceCounts[s] = (allSourceCounts[s] || 0) + 1;
-      });
-
-      const titleText = window.IS_ARCHIVE 
-        ? `Archiv: ${articles.length} News bis ${buildTimestampStr}`
-        : `${articles.length} News bis ${buildTimestampStr}`;
-
-      document.getElementById('current-title').textContent = titleText;
-      document.getElementById('header-dup-info').innerHTML = `🧹 ${totalDups} Duplikate`;
-
-      const sortedSources = Array.from(new Set([...configuredSources, ...Object.keys(allSourceCounts)])).sort((a, b) => (allSourceCounts[b] || 0) - (allSourceCounts[a] || 0));
-      document.getElementById('source-list').innerHTML = `
-        <li><button class="source-btn active" onclick="filterSource('all', this)"><span>Alle</span><span class="badge">${articles.length}</span></button></li>
-      ` + sortedSources.map(s => `
-        <li><button class="source-btn" onclick="filterSource('${escapeHtml(s)}', this)"><span>${escapeHtml(s)}</span><span class="badge">${allSourceCounts[s] || 0}</span></button></li>
-      `).join('');
-
-      const readList = getStorage('read_news');
-      const seenList = getStorage('seen_news');
-
+      const rList = getStorage('read_news'), sList = getStorage('seen_news');
       document.getElementById('articles-container').innerHTML = articles.map(a => {
-        const id = hashString(a.link || '');
-        const others = (a.other_sources && a.other_sources.length) ? `<span class="feed-others">• Auch bei: ${escapeHtml(a.other_sources.join(", "))}</span>` : '';
-        const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" alt="Thumbnail" onerror="this.remove()">` : '';
-        
-        let stateClass = '';
-        if (readList.includes(String(id))) stateClass += ' read';
-        if (seenList.includes(String(id))) stateClass += ' seen';
-
-        return `
-          <article class="feed-card${stateClass}" data-id="${id}" data-sources="${escapeHtml([a.source || '', ...(a.other_sources || [])].join(';;;'))}">
-            <div class="feed-content">
-              <div class="feed-meta">
-                <button class="unread-dot-btn" onclick="event.stopPropagation(); toggleRead('${id}')" title="Als gelesen / ungelesen umschalten" aria-label="Gelesen-Status umschalten">
-                  <span class="unread-dot"></span>
-                </button>
-                <span class="feed-source">${escapeHtml(a.source || 'Quelle')}</span>
-                <span class="feed-time">${formatRelativeTime(a.published)}</span>
-                ${others}
-              </div>
-              <a class="feed-title" href="${escapeHtml(a.link || '#')}" target="_blank" rel="noopener" onclick="markAsRead('${id}')">${escapeHtml(a.title || 'Ohne Titel')}</a>
-              <p class="feed-summary">${a.summary || ''}</p>
+        const id = hStr(a.link||''), oth = (a.other_sources&&a.other_sources.length)?`<span class="feed-others">• Auch bei: ${esc(a.other_sources.join(", "))}</span>`:'';
+        const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" onerror="this.remove()">` : '';
+        const cls = (rList.includes(String(id))?' read':'') + (sList.includes(String(id))?' seen':'');
+        return `<article class="feed-card${cls}" data-id="${id}" data-sources="${esc([a.source||'',...(a.other_sources||[])].join(';;;'))}">
+          <div class="feed-content">
+            <div class="feed-meta">
+              <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')"><span class="unread-dot"></span></button>
+              <span class="feed-source">${esc(a.source||'Quelle')}</span><span class="feed-time">${relTime(a.published)}</span>${oth}
             </div>
-            ${img}
-          </article>
-        `;
+            <a class="feed-title" href="${esc(a.link||'#')}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${esc(a.title||'Ohne Titel')}</a>
+            <p class="feed-summary">${a.summary||''}</p>
+          </div>${img}
+        </article>`;
       }).join('');
     }
 
-    function toggleDupDetails(elementId) {
-      const el = document.getElementById(elementId);
-      if (el) el.style.display = (el.style.display === 'none') ? 'block' : 'none';
-    }
-
-    function openDuplicateModal() {
-      const listEl = document.getElementById('duplicate-list');
-      const dupMap = {};
-      let totalDups = 0;
-
+    function openDupModal(){
+      const el = document.getElementById('dup-list'); if(!el) return;
+      const m = {}; let tot = 0;
       liveArticles.forEach(a => {
-        const details = a.merged_details || [];
-        const accountedSources = new Set();
-
-        details.forEach(m => {
-          const s = m.source || "Unbekannt";
-          if (!dupMap[s]) dupMap[s] = [];
-          dupMap[s].push(m);
-          accountedSources.add(s);
-          totalDups++;
-        });
-
-        (a.other_sources || []).forEach(src => {
-          if (!accountedSources.has(src)) {
-            if (!dupMap[src]) dupMap[src] = [];
-            dupMap[src].push({
-              source: src,
-              title: "Titel im Alt-Cache nicht separat erfasst",
-              link: a.link || '#',
-              matched_with: a.title || '',
-              is_legacy: true
-            });
-            totalDups++;
-          }
-        });
+        (a.merged_details||[]).forEach(d => { const s = d.source||"Unbekannt"; (m[s]=m[s]||[]).push(d); tot++; });
+        (a.other_sources||[]).forEach(src => { if(!m[src]){ m[src]=[{source:src,title:"Altbestand ohne Einzeltitel",link:a.link,matched_with:a.title,is_legacy:true}]; tot++; } });
       });
-
-      const sortedSources = Object.entries(dupMap).sort((a, b) => b[1].length - a[1].length);
-      if (!sortedSources.length) {
-        listEl.innerHTML = '<p style="color:var(--text-muted); padding:12px 0;">Keine zusammengeführten Duplikate im aktuellen Datenbestand.</p>';
-      } else {
-        listEl.innerHTML = `
-          <div style="margin-bottom:12px; font-weight:600; color:var(--accent);">
-            Gesamt: ${totalDups} bereinigte Doppelberichte (Klick auf Badge zum Einsehen)
+      const entries = Object.entries(m).sort((a,b)=>b[1].length-a[1].length);
+      el.innerHTML = !entries.length ? '<p style="color:var(--muted);padding:10px 0">Keine Duplikate gefunden.</p>' :
+        `<div style="margin-bottom:10px;font-weight:600;color:var(--accent)">Gesamt: ${tot} bereinigte Berichte</div>` +
+        entries.map(([src, items], i) => `<div style="border-bottom:1px solid var(--border);padding:6px 0">
+          <div class="modal-row" style="border:none;cursor:pointer" onclick="const e=document.getElementById('dd-${i}');e.style.display=e.style.display==='none'?'block':'none'">
+            <strong>${esc(src)}</strong><span class="badge">${items.length} ▾</span>
           </div>
-        ` + sortedSources.map(([src, items], idx) => `
-          <div style="border-bottom: 1px solid var(--border); padding: 8px 0;">
-            <div class="modal-row" style="border:none; padding:4px 0; cursor:pointer;" onclick="toggleDupDetails('dup-detail-${idx}')">
-              <span style="font-weight:600; color:var(--text);">${escapeHtml(src)}</span>
-              <span class="badge" style="background:var(--accent-dim); color:var(--accent); font-weight:600; cursor:pointer;">
-                ${items.length} Dubletten ▾
-              </span>
-            </div>
-            <div id="dup-detail-${idx}" style="display:none; padding:8px 0 4px 10px; font-size:0.8rem; border-left:2px solid var(--accent); margin-top:6px;">
-              ${items.map(it => `
-                <div style="margin-bottom:8px;">
-                  ${it.is_legacy 
-                    ? `<span style="color:var(--text-muted);">ℹ️ ${escapeHtml(it.title)}</span>`
-                    : `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener" style="color:var(--link); text-decoration:none; font-weight:500;">
-                         🔗 ${escapeHtml(it.title)}
-                       </a>`
-                  }
-                  <div style="color:var(--text-muted); font-size:0.75rem; margin-top:2px;">
-                    ↳ Zusammengeführt mit: <em>"${escapeHtml(it.matched_with)}"</em>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
+          <div id="dd-${i}" style="display:none;padding-left:8px;border-left:2px solid var(--accent);margin-top:4px">
+            ${items.map(it=>`<div style="margin-bottom:6px">${it.is_legacy?esc(it.title):`<a href="${esc(it.link)}" target="_blank" rel="noopener" style="color:var(--link);text-decoration:none">🔗 ${esc(it.title)}</a>`}<div style="color:var(--muted);font-size:.72rem">↳ Mit: "${esc(it.matched_with)}"</div></div>`).join('')}
           </div>
-        `).join('');
-      }
-
-      toggleModal('duplicate-modal', true);
+        </div>`).join('');
+      toggleModal('dup-modal', true);
     }
 
-    function filterSource(src, btn) {
-      activeSource = src;
-      document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById('current-title').textContent = (src === 'all')
-        ? (window.IS_ARCHIVE ? `Archiv: ${liveArticles.length} News bis ${buildTimestampStr}` : `${liveArticles.length} News bis ${buildTimestampStr}`)
-        : `${src} (${allSourceCounts[src] || 0}) bis ${buildTimestampStr}`;
-      applyFilters();
-      if (window.innerWidth <= 768) toggleSidebar();
+    function filterSource(src, btn){
+      activeSource = src; document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
+      if(btn) btn.classList.add('active');
+      const t = document.getElementById('current-title');
+      if(t) t.textContent = (src==='all')?(window.IS_ARCHIVE?`Archiv: ${liveArticles.length} News bis ${buildTime}`:`${liveArticles.length} News bis ${buildTime}`):`${src} (${counts[src]||0}) bis ${buildTime}`;
+      applyFilters(); if(window.innerWidth<=768) toggleSidebar();
     }
-
-    function filterSearch(q) {
-      clearTimeout(searchDebounceTimer);
-      searchDebounceTimer = setTimeout(() => {
-        searchQuery = q.toLowerCase().trim();
-        applyFilters();
-      }, 120);
-    }
-
-    function applyFilters() {
+    function filterSearch(q){ clearTimeout(sTimer); sTimer = setTimeout(()=>{ searchQuery = q.toLowerCase().trim(); applyFilters(); }, 120); }
+    function applyFilters(){
       document.querySelectorAll('.feed-card').forEach(c => {
-        const matchSrc = activeSource === 'all' || (c.dataset.sources || '').split(';;;').includes(activeSource);
-        const matchQ = !searchQuery || c.textContent.toLowerCase().includes(searchQuery);
-        c.style.display = (matchSrc && matchQ) ? '' : 'none';
+        const mSrc = activeSource==='all' || (c.dataset.sources||'').split(';;;').includes(activeSource);
+        const mQ = !searchQuery || c.textContent.toLowerCase().includes(searchQuery);
+        c.style.display = (mSrc && mQ) ? '' : 'none';
       });
     }
 
-    async function triggerWorkflow() {
-      let token = localStorage.getItem('gh_dispatch_token') || prompt("GitHub Personal Access Token:");
-      if (!token) return;
-      localStorage.setItem('gh_dispatch_token', token.trim());
+    async function triggerWorkflow(){
+      let tk = localStorage.getItem('gh_token') || prompt("GitHub Personal Access Token:");
+      if(!tk) return; localStorage.setItem('gh_token', tk.trim());
       try {
-        const res = await fetch('https://api.github.com/repos/schoerb/news-hub/actions/workflows/deploy.yml/dispatches', {
-          method: 'POST',
-          headers: { 'Accept': 'application/vnd.github+json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ ref: 'main' })
+        const r = await fetch('https://api.github.com/repos/schoerb/news-hub/actions/workflows/deploy.yml/dispatches', {
+          method:'POST', headers:{'Accept':'application/vnd.github+json','Authorization':`Bearer ${tk}`}, body:JSON.stringify({ref:'main'})
         });
-        if (res.status === 204) {
-          if (confirm('🚀 GitHub Action gestartet!
+        if(r.status===204 && confirm('🚀 GitHub Action gestartet!
 
-Direkt zum Actions-Status wechseln?')) {
-            window.open('https://github.com/schoerb/news-hub/actions', '_blank');
-          }
-        } else {
-          alert(`Status: ${res.status}`);
-        }
-      } catch (e) { alert(e.message); }
+Direkt zum Actions-Status wechseln?')) window.open('https://github.com/schoerb/news-hub/actions','_blank');
+        else if(r.status!==204) alert(`Fehler: Status ${r.status}`);
+      } catch(e){ alert(e.message); }
     }
 
-    function tryDecrypt(password) {
+    function tryDecrypt(pw){
       try {
-        if (!rawEncryptedData) return false;
-        if (rawEncryptedData.trim().startsWith('[')) {
-          globalArticles = JSON.parse(rawEncryptedData);
-          onDataLoaded();
-          return true;
-        }
-        const dec = CryptoJS.AES.decrypt(rawEncryptedData, password).toString(CryptoJS.enc.Utf8);
-        if (!dec || !dec.startsWith('[')) return false;
-        globalArticles = JSON.parse(dec);
-        onDataLoaded();
-        return true;
-      } catch (e) { return false; }
+        if(!rawData) return false;
+        if(rawData.trim().startsWith('[')){ globalArticles = JSON.parse(rawData); onLoaded(); return true; }
+        const dec = CryptoJS.AES.decrypt(rawData, pw).toString(CryptoJS.enc.Utf8);
+        if(!dec || !dec.startsWith('[')) return false;
+        globalArticles = JSON.parse(dec); onLoaded(); return true;
+      } catch(e){ return false; }
     }
 
-    async function init() {
+    async function init(){
       initTheme();
-      initSidebarState();
-
+      if(window.innerWidth>768 && localStorage.getItem('sidebar_closed')==='true') document.getElementById('sidebar').classList.add('collapsed');
       try {
-        const r = await fetch('data.json?t=' + Date.now(), { cache: 'no-store' });
-        if (!r.ok) {
-          document.getElementById('current-title').textContent = `Fehler: data.json nicht gefunden (${r.status})`;
-          return;
-        }
-        rawEncryptedData = await r.text();
-      } catch (e) {
-        document.getElementById('current-title').textContent = "Fehler beim Laden von data.json";
-        return;
-      }
+        const r = await fetch('data.json?t=' + Date.now(), {cache:'no-store'}).catch(() => fetch('data.json'));
+        if(!r.ok) throw new Error(r.status);
+        rawData = await r.text();
+      } catch(e){ document.getElementById('current-title').textContent = "Fehler beim Laden von data.json"; return; }
 
-      if (rawEncryptedData.trim().startsWith('[')) {
-        globalArticles = JSON.parse(rawEncryptedData);
-        onDataLoaded();
-        return;
-      }
-
-      const savedPw = localStorage.getItem('hub_key');
-      if (savedPw && tryDecrypt(savedPw)) return;
-
-      document.getElementById('auth-overlay').style.display = 'flex';
-      const pwInput = document.getElementById('auth-password');
-      if (pwInput) pwInput.focus();
-    }
-
-    function submitAuth() {
-      const pw = document.getElementById('auth-password').value;
-      if (tryDecrypt(pw)) {
-        localStorage.setItem('hub_key', pw);
-      } else {
-        document.getElementById('auth-error').style.display = 'block';
+      if(!tryDecrypt(localStorage.getItem('hub_key')||"")) {
+        document.getElementById('auth-overlay').style.display = 'flex';
+        document.getElementById('auth-pwd').focus();
       }
     }
 
-    function onDataLoaded() {
+    function submitAuth(){
+      const pw = document.getElementById('auth-pwd').value;
+      if(tryDecrypt(pw)) localStorage.setItem('hub_key', pw);
+      else document.getElementById('auth-err').style.display = 'block';
+    }
+
+    function onLoaded(){
       document.getElementById('auth-overlay').style.display = 'none';
-      cleanupStorage(globalArticles);
+      const valid = new Set(globalArticles.map(a => String(hStr(a.link||''))));
+      setStorage('read_news', getStorage('read_news').filter(id => valid.has(id)));
+      setStorage('seen_news', getStorage('seen_news').filter(id => valid.has(id)));
 
-      const now = Date.now();
-      const cutoff24 = new Date(now - 24 * 3600 * 1000);
-      const cutoff48 = new Date(now - 48 * 3600 * 1000);
-
+      const now = Date.now(), c24 = new Date(now - 86400000), c48 = new Date(now - 172800000);
       liveArticles = globalArticles.filter(a => {
-        try {
-          const p = a.published ? new Date(a.published) : null;
-          if (!p || isNaN(p.getTime())) return !window.IS_ARCHIVE;
-          return window.IS_ARCHIVE ? (p < cutoff24 && p >= cutoff48) : (p >= cutoff24);
-        } catch (e) {
-          return !window.IS_ARCHIVE;
-        }
+        try { const p = new Date(a.published); return window.IS_ARCHIVE ? (p < c24 && p >= c48) : (p >= c24); } catch(e){ return !window.IS_ARCHIVE; }
       });
-
-      if (!window.IS_ARCHIVE && liveArticles.length === 0 && globalArticles.length > 0) {
-        liveArticles = globalArticles;
-      }
+      if(!window.IS_ARCHIVE && !liveArticles.length && globalArticles.length) liveArticles = globalArticles;
 
       renderUI(liveArticles);
-      initSeenObserver();
-      initSmartHeader();
 
-      document.getElementById('health-list').innerHTML = feedHealthData.map(f => {
-        const isOk = f.status === 'ok' || f.code === 304 || f.code === 200;
-        const icon = isOk ? '🟢' : '🔴';
-        const info = (f.code === 304) ? 'HTTP 304 (Cache unverändert)' : (isOk ? `HTTP ${f.code}` : `Fehler: ${f.status} (${f.code})`);
-        return `
-          <div class="modal-row">
-            <span style="font-weight:500">${icon} ${escapeHtml(f.title)}</span>
-            <span style="color:${isOk ? 'var(--text-muted)' : '#ef4444'}; font-family:monospace; font-size:0.8rem">${escapeHtml(info)}</span>
-          </div>
-        `;
+      // Seen Observer
+      const timers = new Map(), obs = new IntersectionObserver(ents => {
+        ents.forEach(e => {
+          const id = e.target.dataset.id; if(!id) return;
+          if(e.isIntersecting){
+            timers.set(id, setTimeout(() => {
+              const s = getStorage('seen_news'); if(!s.includes(id)){ s.push(id); setStorage('seen_news', s); }
+              e.target.classList.add('seen'); obs.unobserve(e.target);
+            }, 1000));
+          } else if(timers.has(id)){ clearTimeout(timers.get(id)); timers.delete(id); }
+        });
+      }, {root: document.querySelector('.main'), threshold: 0.6});
+      document.querySelectorAll('.feed-card:not(.seen)').forEach(c => obs.observe(c));
+
+      // Header Scroll
+      let lastY = 0; const mEl = document.querySelector('.main'), hEl = document.querySelector('.stream-header');
+      mEl.addEventListener('scroll', () => {
+        const y = mEl.scrollTop;
+        if(Math.abs(lastY-y) > 6 && document.activeElement !== document.getElementById('search-box')) {
+          hEl.classList.toggle('header-hidden', y > lastY && y > 50);
+          lastY = y;
+        }
+      }, {passive:true});
+
+      document.getElementById('health-list').innerHTML = feedHealth.map(f => {
+        const ok = f.status==='ok'||f.code===304||f.code===200;
+        return `<div class="modal-row"><span>${ok?'🟢':'🔴'} ${esc(f.title)}</span><span style="color:${ok?'var(--muted)':'#ef4444'};font-family:monospace">${f.code||f.status}</span></div>`;
       }).join('');
     }
 
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
-        updateRelativeTimes();
-        fetch('data.json?t=' + Date.now(), { cache: 'no-store' })
-          .then(r => r.text())
-          .then(txt => {
-            if (txt && txt !== rawEncryptedData) {
-              rawEncryptedData = txt;
-              const pw = localStorage.getItem('hub_key');
-              tryDecrypt(pw);
-            }
-          })
-          .catch(() => {});
+      if(document.visibilityState==='visible'){
+        document.querySelectorAll('.feed-card').forEach(c => {
+          const art = liveArticles.find(a => String(hStr(a.link||'')) === c.dataset.id);
+          if(art && art.published) c.querySelector('.feed-time').textContent = relTime(art.published);
+        });
+        fetch('data.json?t=' + Date.now(), {cache:'no-store'}).then(r => r.text()).then(t => { if(t && t !== rawData){ rawData = t; tryDecrypt(localStorage.getItem('hub_key')||""); } });
       }
     });
 
-    document.addEventListener('keydown', (e) => {
-      if (document.activeElement === document.getElementById('search-box')) return;
-      const visible = Array.from(document.querySelectorAll('.feed-card')).filter(c => c.style.display !== 'none');
-      if (e.key === '[') toggleSidebar();
-      if (e.key === 'j' && visible.length) { selectedIndex = Math.min(selectedIndex + 1, visible.length - 1); visible[selectedIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
-      if (e.key === 'k' && visible.length) { selectedIndex = Math.max(selectedIndex - 1, 0); visible[selectedIndex].scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
-      if (e.key === 'o' && selectedIndex >= 0) window.open(visible[selectedIndex].querySelector('.feed-title').href, '_blank');
-      if (e.key === 'm' && selectedIndex >= 0) toggleRead(visible[selectedIndex].dataset.id);
-      if (e.key === '/') { e.preventDefault(); focusSearch(); }
-      if (e.key === 'Escape') { toggleModal('health-modal', false); toggleModal('duplicate-modal', false); }
+    document.addEventListener('keydown', e => {
+      if(document.activeElement === document.getElementById('search-box')) return;
+      const vis = Array.from(document.querySelectorAll('.feed-card')).filter(c => c.style.display !== 'none');
+      if(e.key==='[') toggleSidebar();
+      if(e.key==='j' && vis.length){ sIndex = Math.min(sIndex+1, vis.length-1); vis[sIndex].scrollIntoView({behavior:'smooth',block:'nearest'}); }
+      if(e.key==='k' && vis.length){ sIndex = Math.max(sIndex-1, 0); vis[sIndex].scrollIntoView({behavior:'smooth',block:'nearest'}); }
+      if(e.key==='o' && sIndex>=0) window.open(vis[sIndex].querySelector('.feed-title').href, '_blank');
+      if(e.key==='m' && sIndex>=0) toggleRead(vis[sIndex].dataset.id);
+      if(e.key==='/'){ e.preventDefault(); document.getElementById('search-box').focus(); }
+      if(e.key==='Escape'){ toggleModal('health-modal',false); toggleModal('dup-modal',false); }
     });
 
     document.addEventListener('DOMContentLoaded', init);
