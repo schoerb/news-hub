@@ -404,8 +404,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .nav-link{display:block;text-align:center;color:var(--accent);text-decoration:none;font-size:.82rem;font-weight:600;padding:8px;border-radius:6px;background:var(--accent-dim);margin-bottom:8px}
     .main{flex-grow:1;overflow-y:auto;position:relative}
     
-    /* Erhöhte Transparenz & stärkerer Blur für den Header */
-    .stream-header{position:sticky;top:0;z-index:50;background:rgba(18,20,24,.55);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:12px 28px;display:flex;justify-content:space-between;align-items:center;gap:16px;transition:transform .28s ease}
+    /* Header: kompaktes Padding für Desktop */
+    .stream-header{position:sticky;top:0;z-index:50;background:rgba(18,20,24,.55);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;transition:transform .28s ease}
     .stream-header.header-hidden{transform:translateY(-100%)}
     [data-theme="light"] .stream-header{background:rgba(248,250,252,.65)}
     
@@ -415,8 +415,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .header-meta{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap}
     .header-right{display:flex;align-items:center;gap:8px;flex-grow:1;justify-content:flex-end;max-width:520px}
     .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:6px;font-size:.85rem;outline:none;width:100%;max-width:320px}
-    .cards-grid{padding:20px 28px calc(30px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:18px}
-    .feed-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px;display:flex;flex-direction:column;justify-content:space-between;transition:transform .15s}
+    
+    /* Gestraffte Kachel- & Randabstände */
+    .cards-grid{padding:14px 16px calc(24px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
+    .feed-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;transition:transform .15s}
     .feed-card:hover{transform:translateY(-2px);background:var(--hover)}
     .unread-dot-btn{background:none;border:none;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px}
     .unread-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);transition:all .2s}
@@ -426,24 +428,27 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .feed-meta{display:flex;align-items:center;gap:6px;font-size:.75rem;margin-bottom:8px;flex-wrap:wrap}
     .feed-source{color:var(--accent);font-weight:600}
     .feed-time,.feed-others{color:var(--muted);font-size:.72rem}
-    .feed-title{font-size:1.05rem;font-weight:600;color:var(--bold);text-decoration:none;line-height:1.4;margin-bottom:8px}
+    .feed-title{font-size:1.02rem;font-weight:600;color:var(--bold);text-decoration:none;line-height:1.4;margin-bottom:8px}
     .feed-title:hover{color:var(--link);text-decoration:underline}
-    .feed-summary{font-size:.88rem;color:var(--muted);line-height:1.5;margin-bottom:14px}
+    .feed-summary{font-size:.86rem;color:var(--muted);line-height:1.45;margin-bottom:12px}
     .feed-summary strong{color:var(--bold);font-weight:600}
-    .feed-thumb{width:100%;height:160px;object-fit:cover;border-radius:6px;margin-top:auto}
+    .feed-thumb{width:100%;height:150px;object-fit:cover;border-radius:6px;margin-top:auto}
     .meta-clickable{color:var(--accent);cursor:pointer}
     .meta-clickable:hover{text-decoration:underline}
+
+    /* Mobile: 8px Kachel- & Randabstände */
     @media (max-width:768px){
       .sidebar{position:fixed;inset:0 auto 0 0;transform:translateX(-100%);box-shadow:4px 0 24px rgba(0,0,0,.6)}
       .sidebar.open{transform:translateX(0);visibility:visible!important;width:290px!important}
       .sidebar-backdrop.open{display:block}
-      .stream-header{padding:10px 14px;flex-direction:column;align-items:stretch;gap:8px}
+      .stream-header{padding:8px 10px;flex-direction:column;align-items:stretch;gap:8px}
       .header-left{width:100%}
       .stream-header h2{font-size:1rem;white-space:normal}
       .header-meta{font-size:.75rem;flex-wrap:wrap}
-      .header-right{width:100%;max-width:100%;display:flex;gap:8px}
+      .header-right{width:100%;max-width:100%;display:flex;gap:6px}
       .search-input{max-width:100%}
-      .cards-grid{grid-template-columns:1fr;gap:12px;padding:12px 12px calc(30px + env(safe-area-inset-bottom,0px))}
+      .cards-grid{grid-template-columns:1fr;gap:8px;padding:8px 8px calc(24px + env(safe-area-inset-bottom,0px))}
+      .feed-card{padding:14px}
     }
   </style>
 </head>
@@ -503,7 +508,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       </div>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Durchsuchen..." oninput="filterSearch(this.value)">
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:6px">
           __DESKTOP_REFRESH_BTN__
           <button class="btn" onclick="toggleTheme()">🌓</button>
         </div>
