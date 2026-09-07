@@ -403,9 +403,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .sidebar-footer{padding:16px;border-top:1px solid var(--border)}
     .nav-link{display:block;text-align:center;color:var(--accent);text-decoration:none;font-size:.82rem;font-weight:600;padding:8px;border-radius:6px;background:var(--accent-dim);margin-bottom:8px}
     .main{flex-grow:1;overflow-y:auto;position:relative}
-    .stream-header{position:sticky;top:0;z-index:50;background:rgba(18,20,24,.85);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:12px 28px;display:flex;justify-content:space-between;align-items:center;gap:16px;transition:transform .28s ease}
+    
+    /* Erhöhte Transparenz & stärkerer Blur für den Header */
+    .stream-header{position:sticky;top:0;z-index:50;background:rgba(18,20,24,.55);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:12px 28px;display:flex;justify-content:space-between;align-items:center;gap:16px;transition:transform .28s ease}
     .stream-header.header-hidden{transform:translateY(-100%)}
-    [data-theme="light"] .stream-header{background:rgba(248,250,252,.88)}
+    [data-theme="light"] .stream-header{background:rgba(248,250,252,.65)}
+    
     .header-left{display:flex;align-items:center;gap:12px;flex-shrink:0;min-width:0}
     .header-title-group{display:flex;flex-direction:column;gap:2px}
     .stream-header h2{font-size:1.15rem;font-weight:700;color:var(--bold);white-space:nowrap}
