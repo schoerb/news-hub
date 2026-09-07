@@ -190,7 +190,7 @@ def load_cached_state():
             pass
     elif REMOTE_DATA_URL and not force:
         try:
-            r = session.get(REMOTE_DATA_URL, timeout=4)
+            r = session.get(REMOTE_DATA_URL, timeout=(3.05, 5.0))
             if r.ok:
                 content = r.text.strip()
         except Exception:
@@ -233,7 +233,7 @@ def fetch_all_feeds(feeds, cache_meta):
             if parsed_domain.scheme and parsed_domain.netloc:
                 headers["Referer"] = f"{parsed_domain.scheme}://{parsed_domain.netloc}/"
 
-            r = session.get(url, headers=headers, timeout=8)
+            r = session.get(url, headers=headers, timeout=(3.05, 6.0))
             if r.status_code == 304:
                 return [], {"title": f["title"], "status": "ok", "code": 304}
             if not r.ok:
@@ -581,18 +581,25 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .feed-card:hover { transform: translateY(-2px); background: var(--card-hover); }
     .feed-card.selected { border-color: var(--focus-ring); box-shadow: 0 0 0 2px var(--focus-ring); }
 
-    /* Ungelesen-Punkt Indikator */
+    /* Interaktiver Ungelesen-Punkt Indikator */
+    .unread-dot-btn {
+      background: none; border: none; padding: 0; margin: 0; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px; border-radius: 50%;
+    }
     .unread-dot {
       display: inline-block; width: 8px; height: 8px; border-radius: 50%;
       background: var(--accent); box-shadow: 0 0 8px var(--accent);
-      flex-shrink: 0; transition: opacity 0.2s, background 0.2s;
+      flex-shrink: 0; transition: opacity 0.2s, background 0.2s, transform 0.15s;
     }
+    .unread-dot-btn:hover .unread-dot { transform: scale(1.3); }
     .feed-card.seen .unread-dot {
-      background: var(--text-muted); box-shadow: none; opacity: 0.5;
+      background: var(--text-muted); box-shadow: none; opacity: 0.55;
     }
     .feed-card.read .unread-dot {
-      opacity: 0; pointer-events: none;
+      background: transparent; box-shadow: none; border: 1.5px solid var(--text-muted); opacity: 0.35;
     }
+    .feed-card.read .feed-title { color: var(--text-muted); }
 
     .feed-meta { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; margin-bottom: 8px; flex-wrap: wrap; }
     .feed-source { color: var(--accent); font-weight: 600; }
@@ -686,7 +693,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           <div class="header-title-group">
             <h2 id="current-title">Meldungen laden...</h2>
             <div class="header-meta-inline">
-              <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()">🧹 Duplikate ℹ️</span>
+              <span class="meta-clickable" id="header-dup-info" onclick="openDuplicateModal()">🧹 Duplikate</span>
               __HEALTH_BLOCK__
             </div>
           </div>
@@ -769,7 +776,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     function toggleModal(id, open) { document.getElementById(id).style.display = open ? 'flex' : 'none'; }
 
     function getStorage(k) { try { return JSON.parse(localStorage.getItem(k) || '[]'); } catch(e) { return []; } }
-    function setStorage(k, val) { localStorage.setItem(k, JSON.stringify(val.slice(-500))); }
+    function setStorage(k, val) { localStorage.setItem(k, JSON.stringify(val.slice(-1000))); }
 
     function markAsRead(id) {
       const r = getStorage('read_news');
@@ -780,10 +787,16 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     function toggleRead(id) {
       let r = getStorage('read_news');
-      r = r.includes(id) ? r.filter(x => x !== id) : [...r, id];
-      setStorage('read_news', r);
+      const idx = r.indexOf(id);
       const el = document.querySelector(`.feed-card[data-id="${id}"]`);
-      if (el) el.classList.toggle('read');
+      if (idx >= 0) {
+        r.splice(idx, 1);
+        if (el) el.classList.remove('read');
+      } else {
+        r.push(id);
+        if (el) el.classList.add('read');
+      }
+      setStorage('read_news', r);
     }
 
     function markAllAsRead() {
@@ -793,6 +806,14 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         if (!r.includes(c.dataset.id)) r.push(c.dataset.id);
       });
       setStorage('read_news', r);
+    }
+
+    function cleanupStorage(articles) {
+      const validIds = new Set(articles.map(a => String(hashString(a.link || ''))));
+      const cleanRead = getStorage('read_news').filter(id => validIds.has(id));
+      const cleanSeen = getStorage('seen_news').filter(id => validIds.has(id));
+      setStorage('read_news', cleanRead);
+      setStorage('seen_news', cleanSeen);
     }
 
     function initSeenObserver() {
@@ -844,9 +865,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         allSourceCounts[s] = (allSourceCounts[s] || 0) + 1;
       });
 
-      const prefix = window.IS_ARCHIVE ? 'Archiv' : 'Alle';
-      document.getElementById('current-title').textContent = `${prefix} ${articles.length} Meldungen bis ${buildTimestampStr}`;
-      document.getElementById('header-dup-info').innerHTML = `🧹 ${totalDups} Duplikate bereinigt ℹ️`;
+      const titleText = window.IS_ARCHIVE 
+        ? `Archiv: ${articles.length} News bis ${buildTimestampStr}`
+        : `${articles.length} News bis ${buildTimestampStr}`;
+
+      document.getElementById('current-title').textContent = titleText;
+      document.getElementById('header-dup-info').innerHTML = `🧹 ${totalDups} Duplikate`;
 
       const sortedSources = Array.from(new Set([...configuredSources, ...Object.keys(allSourceCounts)])).sort((a, b) => (allSourceCounts[b] || 0) - (allSourceCounts[a] || 0));
       document.getElementById('source-list').innerHTML = `
@@ -871,7 +895,9 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           <article class="feed-card${stateClass}" data-id="${id}" data-sources="${escapeHtml([a.source || '', ...(a.other_sources || [])].join(';;;'))}">
             <div class="feed-content">
               <div class="feed-meta">
-                <span class="unread-dot" title="Ungelesen"></span>
+                <button class="unread-dot-btn" onclick="event.stopPropagation(); toggleRead('${id}')" title="Als gelesen / ungelesen umschalten" aria-label="Gelesen-Status umschalten">
+                  <span class="unread-dot"></span>
+                </button>
                 <span class="feed-source">${escapeHtml(a.source || 'Quelle')}</span>
                 <span class="feed-time">${formatRelativeTime(a.published)}</span>
                 ${others}
@@ -964,9 +990,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       activeSource = src;
       document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      const prefix = window.IS_ARCHIVE ? 'Archiv' : 'Alle';
       document.getElementById('current-title').textContent = (src === 'all')
-        ? `${prefix} ${liveArticles.length} Meldungen bis ${buildTimestampStr}`
+        ? (window.IS_ARCHIVE ? `Archiv: ${liveArticles.length} News bis ${buildTimestampStr}` : `${liveArticles.length} News bis ${buildTimestampStr}`)
         : `${src} (${allSourceCounts[src] || 0}) bis ${buildTimestampStr}`;
       applyFilters();
       if (window.innerWidth <= 768) toggleSidebar();
@@ -1029,7 +1054,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       initSidebarState();
 
       try {
-        const r = await fetch('data.json');
+        const r = await fetch('data.json?t=' + Date.now(), { cache: 'no-store' });
         if (!r.ok) {
           document.getElementById('current-title').textContent = `Fehler: data.json nicht gefunden (${r.status})`;
           return;
@@ -1065,6 +1090,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     function onDataLoaded() {
       document.getElementById('auth-overlay').style.display = 'none';
+      cleanupStorage(globalArticles);
+
       const now = Date.now();
       const cutoff24 = new Date(now - 24 * 3600 * 1000);
       const cutoff48 = new Date(now - 48 * 3600 * 1000);
@@ -1103,7 +1130,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         updateRelativeTimes();
-        fetch('data.json')
+        fetch('data.json?t=' + Date.now(), { cache: 'no-store' })
           .then(r => r.text())
           .then(txt => {
             if (txt && txt !== rawEncryptedData) {
@@ -1136,7 +1163,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
 
 def render_page(feed_health, feeds, is_archive=False):
-    now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y, %H:%M")
+    # Formatiert als "07.09. 12:36" (ohne Jahreszahl und Komma)
+    now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m. %H:%M")
     ok_feeds = sum(1 for h in feed_health if h["status"] == "ok" or h["code"] in (200, 304))
     failed_count = len(feed_health) - ok_feeds
 
@@ -1144,13 +1172,13 @@ def render_page(feed_health, feeds, is_archive=False):
         health_text = (
             f'<span class="meta-sep">•</span>'
             f'<span style="color:#eab308; cursor:pointer;" onclick="toggleModal(\'health-modal\', true)" title="Klicken für Fehlerdetails">'
-            f'🟡 {ok_feeds}/{len(feed_health)} Feeds ({failed_count} gestört) ℹ️</span>'
+            f'🟡 {ok_feeds}/{len(feed_health)} Feeds ({failed_count} gestört)</span>'
         )
     else:
         health_text = (
             f'<span class="meta-sep">•</span>'
             f'<span class="meta-clickable" onclick="toggleModal(\'health-modal\', true)" title="Klicken für Feed-Details">'
-            f'🟢 {ok_feeds}/{len(feed_health)} Feeds online ℹ️</span>'
+            f'🟢 {ok_feeds}/{len(feed_health)} Feeds online</span>'
         )
 
     page = PAGE_TEMPLATE.replace("__PAGE_TITLE__", "Archiv" if is_archive else "News-Hub") \
