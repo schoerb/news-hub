@@ -51,7 +51,7 @@ session.headers.update({
     "Accept": "application/rss+xml, application/xml, text/xml, */*;q=0.8",
 })
 
-# --- Krypto & Hash-Helfer ---
+# --- Krypto-Helfer ---
 def openssl_kdf(password: bytes, salt: bytes, key_len=32, iv_len=16) -> tuple[bytes, bytes]:
     d = b""
     while len(d) < (key_len + iv_len):
@@ -261,10 +261,17 @@ def fetch_all_feeds(feeds, cache_meta):
 
 
 # --- Deduplizierung ---
+def clean_stem(w: str) -> str:
+    for end in ("s", "n", "en", "er", "es", "e"):
+        if w.endswith(end) and len(w) > 4:
+            return w[:-len(end)]
+    return w
+
+
 def extract_features(title: str):
     words = re.sub(r"[^\w\s\.]", " ", title.lower()).split()
     nums = {w for w in words if any(c.isdigit() for c in w) and len(w) >= 2}
-    kws = {w.rstrip("sner") for w in words if w not in STOPWORDS and len(w) > 2 and w not in nums}
+    kws = {clean_stem(w) for w in words if w not in STOPWORDS and len(w) > 2 and w not in nums}
     return kws, nums
 
 
@@ -617,26 +624,20 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         const r = await fetch('https://api.github.com/repos/schoerb/news-hub/actions/workflows/deploy.yml/dispatches', {
           method:'POST', headers:{'Accept':'application/vnd.github+json','Authorization':`Bearer ${tk}`}, body:JSON.stringify({ref:'main'})
         });
-        if(r.status===204 && confirm('🚀 GitHub Action gestartet!\n\nDirekt zum Actions-Status wechseln?')) window.open('https://github.com/schoerb/news-hub/actions','_blank');
+        if(r.status===204 && confirm('🚀 GitHub Action gestartet! Direkt zum Actions-Status wechseln?')) window.open('https://github.com/schoerb/news-hub/actions','_blank');
         else if(r.status!==204) alert(`Fehler: Status ${r.status}`);
       } catch(e){ alert(e.message); }
     }
 
-    function tryProcessData(pw){
+    function parsePayload(pw){
       try {
-        if(!rawData) return false;
-        if(rawData.trim().startsWith('[')){
-          globalArticles = JSON.parse(rawData);
-          onLoaded();
-          return true;
-        }
-        if(!pw) return false;
+        if(!rawData) return null;
+        if(rawData.trim().startsWith('[')) return JSON.parse(rawData);
+        if(!pw) return null;
         const dec = CryptoJS.AES.decrypt(rawData, pw).toString(CryptoJS.enc.Utf8);
-        if(!dec || !dec.startsWith('[')) return false;
-        globalArticles = JSON.parse(dec);
-        onLoaded();
-        return true;
-      } catch(e){ return false; }
+        if(!dec || !dec.startsWith('[')) return null;
+        return JSON.parse(dec);
+      } catch(e){ return null; }
     }
 
     async function init(){
@@ -648,70 +649,85 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         rawData = await r.text();
       } catch(e){ document.getElementById('current-title').textContent = "Fehler beim Laden von data.json"; return; }
 
-      if(rawData.trim().startsWith('[')) {
-        tryProcessData('');
-      } else {
+      let parsed = parsePayload('');
+      if(!parsed) {
         const savedPw = localStorage.getItem('hub_key');
-        if(!savedPw || !tryProcessData(savedPw)) {
-          document.getElementById('auth-overlay').style.display = 'flex';
-          document.getElementById('auth-pwd').focus();
-        }
+        if(savedPw) parsed = parsePayload(savedPw);
+      }
+
+      if(parsed) {
+        globalArticles = parsed;
+        onLoaded();
+      } else {
+        document.getElementById('auth-overlay').style.display = 'flex';
+        document.getElementById('auth-pwd').focus();
       }
     }
 
     function submitAuth(){
       const pw = document.getElementById('auth-pwd').value;
-      if(tryProcessData(pw)) {
+      const parsed = parsePayload(pw);
+      if(parsed) {
         localStorage.setItem('hub_key', pw);
+        globalArticles = parsed;
+        onLoaded();
       } else {
         document.getElementById('auth-err').style.display = 'block';
       }
     }
 
     function onLoaded(){
-      document.getElementById('auth-overlay').style.display = 'none';
-      const valid = new Set(globalArticles.map(a => String(hStr(a.link||''))));
-      setStorage('read_news', getStorage('read_news').filter(id => valid.has(id)));
-      setStorage('seen_news', getStorage('seen_news').filter(id => valid.has(id)));
+      try {
+        document.getElementById('auth-overlay').style.display = 'none';
+        const valid = new Set(globalArticles.map(a => String(hStr(a.link||''))));
+        setStorage('read_news', getStorage('read_news').filter(id => valid.has(id)));
+        setStorage('seen_news', getStorage('seen_news').filter(id => valid.has(id)));
 
-      const now = Date.now(), c24 = new Date(now - 86400000), c48 = new Date(now - 172800000);
-      liveArticles = globalArticles.filter(a => {
-        try { const p = new Date(a.published); return window.IS_ARCHIVE ? (p < c24 && p >= c48) : (p >= c24); } catch(e){ return !window.IS_ARCHIVE; }
-      });
-      if(!window.IS_ARCHIVE && !liveArticles.length && globalArticles.length) liveArticles = globalArticles;
-
-      renderUI(liveArticles);
-
-      // Seen Observer
-      const timers = new Map(), obs = new IntersectionObserver(ents => {
-        ents.forEach(e => {
-          const id = e.target.dataset.id; if(!id) return;
-          if(e.isIntersecting){
-            timers.set(id, setTimeout(() => {
-              const s = getStorage('seen_news'); if(!s.includes(id)){ s.push(id); setStorage('seen_news', s); }
-              e.target.classList.add('seen'); obs.unobserve(e.target);
-            }, 1000));
-          } else if(timers.has(id)){ clearTimeout(timers.get(id)); timers.delete(id); }
+        const now = Date.now(), c24 = new Date(now - 86400000), c48 = new Date(now - 172800000);
+        liveArticles = globalArticles.filter(a => {
+          if (!a.published) return !window.IS_ARCHIVE;
+          const p = new Date(a.published);
+          if (isNaN(p.getTime())) return !window.IS_ARCHIVE;
+          return window.IS_ARCHIVE ? (p < c24 && p >= c48) : (p >= c24);
         });
-      }, {root: document.querySelector('.main'), threshold: 0.6});
-      document.querySelectorAll('.feed-card:not(.seen)').forEach(c => obs.observe(c));
+        if(!window.IS_ARCHIVE && !liveArticles.length && globalArticles.length) liveArticles = globalArticles;
 
-      // Header Scroll
-      let lastY = 0; const mEl = document.querySelector('.main'), hEl = document.querySelector('.stream-header');
-      mEl.addEventListener('scroll', () => {
-        const y = mEl.scrollTop;
-        if(Math.abs(lastY-y) > 6 && document.activeElement !== document.getElementById('search-box')) {
-          hEl.classList.toggle('header-hidden', y > lastY && y > 50);
-          lastY = y;
+        renderUI(liveArticles);
+
+        // Seen Observer
+        const timers = new Map(), obs = new IntersectionObserver(ents => {
+          ents.forEach(e => {
+            const id = e.target.dataset.id; if(!id) return;
+            if(e.isIntersecting){
+              timers.set(id, setTimeout(() => {
+                const s = getStorage('seen_news'); if(!s.includes(id)){ s.push(id); setStorage('seen_news', s); }
+                e.target.classList.add('seen'); obs.unobserve(e.target);
+              }, 1000));
+            } else if(timers.has(id)){ clearTimeout(timers.get(id)); timers.delete(id); }
+          });
+        }, {root: document.querySelector('.main'), threshold: 0.6});
+        document.querySelectorAll('.feed-card:not(.seen)').forEach(c => obs.observe(c));
+
+        // Header Scroll
+        let lastY = 0; const mEl = document.querySelector('.main'), hEl = document.querySelector('.stream-header');
+        mEl.addEventListener('scroll', () => {
+          const y = mEl.scrollTop;
+          if(Math.abs(lastY-y) > 6 && document.activeElement !== document.getElementById('search-box')) {
+            hEl.classList.toggle('header-hidden', y > lastY && y > 50);
+            lastY = y;
+          }
+        }, {passive:true});
+
+        const hl = document.getElementById('health-list');
+        if(hl) {
+          hl.innerHTML = feedHealth.map(f => {
+            const ok = f.status==='ok'||f.code===304||f.code===200;
+            return `<div class="modal-row"><span>${ok?'🟢':'🔴'} ${esc(f.title)}</span><span style="color:${ok?'var(--muted)':'#ef4444'};font-family:monospace">${f.code||f.status}</span></div>`;
+          }).join('');
         }
-      }, {passive:true});
-
-      const hl = document.getElementById('health-list');
-      if(hl) {
-        hl.innerHTML = feedHealth.map(f => {
-          const ok = f.status==='ok'||f.code===304||f.code===200;
-          return `<div class="modal-row"><span>${ok?'🟢':'🔴'} ${esc(f.title)}</span><span style="color:${ok?'var(--muted)':'#ef4444'};font-family:monospace">${f.code||f.status}</span></div>`;
-        }).join('');
+      } catch(err) {
+        console.error(err);
+        document.getElementById('current-title').textContent = "Fehler: " + err.message;
       }
     }
 
@@ -724,7 +740,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         fetch('data.json?t=' + Date.now(), {cache:'no-store'}).then(r => r.text()).then(t => { 
           if(t && t !== rawData){ 
             rawData = t; 
-            tryProcessData(localStorage.getItem('hub_key')||""); 
+            const parsed = parsePayload(localStorage.getItem('hub_key')||"");
+            if(parsed) { globalArticles = parsed; onLoaded(); }
           } 
         });
       }
