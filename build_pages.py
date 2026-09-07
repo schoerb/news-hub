@@ -486,6 +486,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           <h2 id="current-title">Meldungen laden...</h2>
           <div class="header-meta">
             <span class="meta-clickable" id="header-dup-info" onclick="openDupModal()">🧹 Duplikate</span>
+            <span style="color:var(--border)">•</span>
             __HEALTH_BLOCK__
           </div>
         </div>
@@ -545,25 +546,31 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const dEl = document.getElementById('header-dup-info'); if(dEl) dEl.innerHTML = `🧹 ${totalDups} Duplikate`;
 
       const sorted = Array.from(new Set([...configuredSources, ...Object.keys(counts)])).sort((a,b)=>(counts[b]||0)-(counts[a]||0));
-      document.getElementById('source-list').innerHTML = `<li><button class="source-btn active" onclick="filterSource('all',this)"><span>Alle</span><span class="badge">${articles.length}</span></button></li>` +
-        sorted.map(s => `<li><button class="source-btn" onclick="filterSource('${esc(s)}',this)"><span>${esc(s)}</span><span class="badge">${counts[s]||0}</span></button></li>`).join('');
+      const sl = document.getElementById('source-list');
+      if(sl) {
+        sl.innerHTML = `<li><button class="source-btn active" onclick="filterSource('all',this)"><span>Alle</span><span class="badge">${articles.length}</span></button></li>` +
+          sorted.map(s => `<li><button class="source-btn" onclick="filterSource('${esc(s)}',this)"><span>${esc(s)}</span><span class="badge">${counts[s]||0}</span></button></li>`).join('');
+      }
 
       const rList = getStorage('read_news'), sList = getStorage('seen_news');
-      document.getElementById('articles-container').innerHTML = articles.map(a => {
-        const id = hStr(a.link||''), oth = (a.other_sources&&a.other_sources.length)?`<span class="feed-others">• Auch bei: ${esc(a.other_sources.join(", "))}</span>`:'';
-        const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" onerror="this.remove()">` : '';
-        const cls = (rList.includes(String(id))?' read':'') + (sList.includes(String(id))?' seen':'');
-        return `<article class="feed-card${cls}" data-id="${id}" data-sources="${esc([a.source||'',...(a.other_sources||[])].join(';;;'))}">
-          <div class="feed-content">
-            <div class="feed-meta">
-              <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')"><span class="unread-dot"></span></button>
-              <span class="feed-source">${esc(a.source||'Quelle')}</span><span class="feed-time">${relTime(a.published)}</span>${oth}
-            </div>
-            <a class="feed-title" href="${esc(a.link||'#')}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${esc(a.title||'Ohne Titel')}</a>
-            <p class="feed-summary">${a.summary||''}</p>
-          </div>${img}
-        </article>`;
-      }).join('');
+      const cont = document.getElementById('articles-container');
+      if(cont) {
+        cont.innerHTML = articles.map(a => {
+          const id = hStr(a.link||''), oth = (a.other_sources&&a.other_sources.length)?`<span class="feed-others">• Auch bei: ${esc(a.other_sources.join(", "))}</span>`:'';
+          const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" onerror="this.remove()">` : '';
+          const cls = (rList.includes(String(id))?' read':'') + (sList.includes(String(id))?' seen':'');
+          return `<article class="feed-card${cls}" data-id="${id}" data-sources="${esc([a.source||'',...(a.other_sources||[])].join(';;;'))}">
+            <div class="feed-content">
+              <div class="feed-meta">
+                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')"><span class="unread-dot"></span></button>
+                <span class="feed-source">${esc(a.source||'Quelle')}</span><span class="feed-time">${relTime(a.published)}</span>${oth}
+              </div>
+              <a class="feed-title" href="${esc(a.link||'#')}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${esc(a.title||'Ohne Titel')}</a>
+              <p class="feed-summary">${a.summary||''}</p>
+            </div>${img}
+          </article>`;
+        }).join('');
+      }
     }
 
     function openDupModal(){
@@ -615,13 +622,20 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       } catch(e){ alert(e.message); }
     }
 
-    function tryDecrypt(pw){
+    function tryProcessData(pw){
       try {
         if(!rawData) return false;
-        if(rawData.trim().startsWith('[')){ globalArticles = JSON.parse(rawData); onLoaded(); return true; }
+        if(rawData.trim().startsWith('[')){
+          globalArticles = JSON.parse(rawData);
+          onLoaded();
+          return true;
+        }
+        if(!pw) return false;
         const dec = CryptoJS.AES.decrypt(rawData, pw).toString(CryptoJS.enc.Utf8);
         if(!dec || !dec.startsWith('[')) return false;
-        globalArticles = JSON.parse(dec); onLoaded(); return true;
+        globalArticles = JSON.parse(dec);
+        onLoaded();
+        return true;
       } catch(e){ return false; }
     }
 
@@ -634,16 +648,24 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         rawData = await r.text();
       } catch(e){ document.getElementById('current-title').textContent = "Fehler beim Laden von data.json"; return; }
 
-      if(!tryDecrypt(localStorage.getItem('hub_key')||"")) {
-        document.getElementById('auth-overlay').style.display = 'flex';
-        document.getElementById('auth-pwd').focus();
+      if(rawData.trim().startsWith('[')) {
+        tryProcessData('');
+      } else {
+        const savedPw = localStorage.getItem('hub_key');
+        if(!savedPw || !tryProcessData(savedPw)) {
+          document.getElementById('auth-overlay').style.display = 'flex';
+          document.getElementById('auth-pwd').focus();
+        }
       }
     }
 
     function submitAuth(){
       const pw = document.getElementById('auth-pwd').value;
-      if(tryDecrypt(pw)) localStorage.setItem('hub_key', pw);
-      else document.getElementById('auth-err').style.display = 'block';
+      if(tryProcessData(pw)) {
+        localStorage.setItem('hub_key', pw);
+      } else {
+        document.getElementById('auth-err').style.display = 'block';
+      }
     }
 
     function onLoaded(){
@@ -684,10 +706,13 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         }
       }, {passive:true});
 
-      document.getElementById('health-list').innerHTML = feedHealth.map(f => {
-        const ok = f.status==='ok'||f.code===304||f.code===200;
-        return `<div class="modal-row"><span>${ok?'🟢':'🔴'} ${esc(f.title)}</span><span style="color:${ok?'var(--muted)':'#ef4444'};font-family:monospace">${f.code||f.status}</span></div>`;
-      }).join('');
+      const hl = document.getElementById('health-list');
+      if(hl) {
+        hl.innerHTML = feedHealth.map(f => {
+          const ok = f.status==='ok'||f.code===304||f.code===200;
+          return `<div class="modal-row"><span>${ok?'🟢':'🔴'} ${esc(f.title)}</span><span style="color:${ok?'var(--muted)':'#ef4444'};font-family:monospace">${f.code||f.status}</span></div>`;
+        }).join('');
+      }
     }
 
     document.addEventListener('visibilitychange', () => {
@@ -696,7 +721,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           const art = liveArticles.find(a => String(hStr(a.link||'')) === c.dataset.id);
           if(art && art.published) c.querySelector('.feed-time').textContent = relTime(art.published);
         });
-        fetch('data.json?t=' + Date.now(), {cache:'no-store'}).then(r => r.text()).then(t => { if(t && t !== rawData){ rawData = t; tryDecrypt(localStorage.getItem('hub_key')||""); } });
+        fetch('data.json?t=' + Date.now(), {cache:'no-store'}).then(r => r.text()).then(t => { 
+          if(t && t !== rawData){ 
+            rawData = t; 
+            tryProcessData(localStorage.getItem('hub_key')||""); 
+          } 
+        });
       }
     });
 
