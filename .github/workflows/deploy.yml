@@ -2,10 +2,15 @@ name: Build and Deploy News Hub
 
 on:
   schedule:
-    # Läuft alle 30 Minuten nur zwischen 04:00 und 22:59 UTC
-    # (entspricht nachts in DE einer Pause ab ca. 00:00/01:00 bis 06:00 Uhr)
-    - cron: '*/30 4-22 * * *'
+    # Krumme Minuten (17 und 47) umgehen die überlasteten GitHub-Queues
+    - cron: '17,47 4-22 * * *'
   workflow_dispatch:
+    inputs:
+      force_refresh:
+        description: 'Cache ignorieren und alles neu verarbeiten'
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -21,10 +26,7 @@ permissions:
 
 concurrency:
   group: 'pages-deploy'
-  cancel-in-progress: true
-
-env:
-  FORCE_REFRESH: "true"  
+  cancel-in-progress: false   # Verhindert, dass sich überlappende Läufe gegenseitig killen
 
 jobs:
   build-and-deploy:
@@ -59,6 +61,7 @@ jobs:
           PAGE_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
           FEEDS_OPML: ${{ secrets.FEEDS_OPML }}
           FEED_PRIORITIES: ${{ secrets.FEED_PRIORITIES }}
+          FORCE_REFRESH: ${{ inputs.force_refresh || 'false' }}
         run: python build_pages.py
 
       - name: Write robots.txt and .nojekyll
