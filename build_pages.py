@@ -404,7 +404,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .nav-link{display:block;text-align:center;color:var(--accent);text-decoration:none;font-size:.82rem;font-weight:600;padding:8px;border-radius:6px;background:var(--accent-dim);margin-bottom:8px}
     .main{flex-grow:1;overflow-y:auto;position:relative}
     
-    /* Header: kompaktes Padding für Desktop */
     .stream-header{position:sticky;top:0;z-index:50;background:rgba(18,20,24,.55);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;transition:transform .28s ease}
     .stream-header.header-hidden{transform:translateY(-100%)}
     [data-theme="light"] .stream-header{background:rgba(248,250,252,.65)}
@@ -416,7 +415,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .header-right{display:flex;align-items:center;gap:8px;flex-grow:1;justify-content:flex-end;max-width:520px}
     .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:6px;font-size:.85rem;outline:none;width:100%;max-width:320px}
     
-    /* Gestraffte Kachel- & Randabstände */
     .cards-grid{padding:14px 16px calc(24px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
     .feed-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;transition:transform .15s}
     .feed-card:hover{transform:translateY(-2px);background:var(--hover)}
@@ -436,7 +434,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .meta-clickable{color:var(--accent);cursor:pointer}
     .meta-clickable:hover{text-decoration:underline}
 
-    /* Mobile: 8px Kachel- & Randabstände */
     @media (max-width:768px){
       .sidebar{position:fixed;inset:0 auto 0 0;transform:translateX(-100%);box-shadow:4px 0 24px rgba(0,0,0,.6)}
       .sidebar.open{transform:translateX(0);visibility:visible!important;width:290px!important}
@@ -480,6 +477,17 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       <div class="modal-header"><h2>🧹 Bereinigte Duplikate</h2><button class="btn" onclick="toggleModal('dup-modal',false)">&times;</button></div>
       <div id="dup-list" class="modal-body"></div>
       <button class="btn-action" onclick="toggleModal('dup-modal',false)">Schließen</button>
+    </div>
+  </div>
+
+  <!-- In-App Workflow Modal statt Browser-Popups -->
+  <div id="workflow-modal" class="modal-overlay">
+    <div class="modal-card" style="max-width:440px">
+      <div class="modal-header">
+        <h2 id="wf-title">🔄 Feed-Aktualisierung</h2>
+        <button class="btn" onclick="toggleModal('workflow-modal',false)">&times;</button>
+      </div>
+      <div id="wf-body" class="modal-body"></div>
     </div>
   </div>
 
@@ -625,16 +633,67 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       });
     }
 
-    async function triggerWorkflow(){
-      let tk = localStorage.getItem('gh_token') || prompt("GitHub Personal Access Token:");
-      if(!tk) return; localStorage.setItem('gh_token', tk.trim());
+    // In-App Workflow Trigger ohne Browser-Popups
+    function triggerWorkflow(){
+      const tk = localStorage.getItem('gh_token');
+      if(!tk){
+        showTokenPrompt();
+      } else {
+        dispatchWorkflow(tk);
+      }
+    }
+
+    function showTokenPrompt(){
+      const b = document.getElementById('wf-body');
+      b.innerHTML = `
+        <p style="color:var(--muted);margin-bottom:12px">Bitte gib dein GitHub Personal Access Token (PAT) ein, um den Build zu starten:</p>
+        <input type="password" id="wf-token-input" class="search-input" style="max-width:100%;margin-bottom:10px" placeholder="ghp_...">
+        <button class="btn-action" style="margin-top:0" onclick="saveAndDispatch()">Starten</button>
+      `;
+      toggleModal('workflow-modal', true);
+      setTimeout(() => { const el = document.getElementById('wf-token-input'); if(el) el.focus(); }, 100);
+    }
+
+    function saveAndDispatch(){
+      const inp = document.getElementById('wf-token-input');
+      if(!inp || !inp.value.trim()) return;
+      const tk = inp.value.trim();
+      localStorage.setItem('gh_token', tk);
+      dispatchWorkflow(tk);
+    }
+
+    async function dispatchWorkflow(tk){
+      const b = document.getElementById('wf-body');
+      b.innerHTML = '<p style="color:var(--muted);text-align:center;padding:16px 0">🚀 Starte GitHub Actions Workflow...</p>';
+      toggleModal('workflow-modal', true);
       try {
         const r = await fetch('https://api.github.com/repos/schoerb/news-hub/actions/workflows/deploy.yml/dispatches', {
-          method:'POST', headers:{'Accept':'application/vnd.github+json','Authorization':`Bearer ${tk}`}, body:JSON.stringify({ref:'main'})
+          method:'POST',
+          headers:{'Accept':'application/vnd.github+json','Authorization':'Bearer ' + tk},
+          body:JSON.stringify({ref:'main'})
         });
-        if(r.status===204 && confirm('🚀 GitHub Action gestartet! Direkt zum Actions-Status wechseln?')) window.open('https://github.com/schoerb/news-hub/actions','_blank');
-        else if(r.status!==204) alert(`Fehler: Status ${r.status}`);
-      } catch(e){ alert(e.message); }
+        if(r.status === 204){
+          b.innerHTML = `
+            <div style="text-align:center;padding:10px 0">
+              <div style="font-size:1.8rem;margin-bottom:8px">✅</div>
+              <p style="font-weight:600;color:var(--bold);margin-bottom:6px">Workflow erfolgreich gestartet!</p>
+              <p style="font-size:.82rem;color:var(--muted);margin-bottom:16px">Der Build läuft jetzt auf GitHub Pages.</p>
+              <div style="display:flex;gap:10px">
+                <a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" class="nav-link" style="flex:1;margin-bottom:0;text-align:center;padding:10px">Zu Actions ↗</a>
+                <button class="btn" style="flex:1;padding:10px" onclick="toggleModal('workflow-modal',false)">Fertig</button>
+              </div>
+            </div>
+          `;
+        } else {
+          b.innerHTML = `
+            <p style="color:#ef4444;margin-bottom:12px">Fehler beim Starten (HTTP ${r.status})</p>
+            <p style="font-size:.82rem;color:var(--muted);margin-bottom:12px">Ist das Token noch gültig und hat Zugriff auf Actions?</p>
+            <button class="btn" style="width:100%" onclick="localStorage.removeItem('gh_token');showTokenPrompt()">Anderes Token eingeben</button>
+          `;
+        }
+      } catch(e){
+        b.innerHTML = `<p style="color:#ef4444;margin-bottom:12px">Netzwerkfehler: ${esc(e.message)}</p><button class="btn" style="width:100%" onclick="toggleModal('workflow-modal',false)">Schließen</button>`;
+      }
     }
 
     function parsePayload(pw){
@@ -764,7 +823,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if(e.key==='o' && sIndex>=0) window.open(vis[sIndex].querySelector('.feed-title').href, '_blank');
       if(e.key==='m' && sIndex>=0) toggleRead(vis[sIndex].dataset.id);
       if(e.key==='/'){ e.preventDefault(); document.getElementById('search-box').focus(); }
-      if(e.key==='Escape'){ toggleModal('health-modal',false); toggleModal('dup-modal',false); }
+      if(e.key==='Escape'){ toggleModal('health-modal',false); toggleModal('dup-modal',false); toggleModal('workflow-modal',false); }
     });
 
     document.addEventListener('DOMContentLoaded', init);
