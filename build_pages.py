@@ -391,6 +391,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .modal-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:12px}
     .btn{background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:1.05rem;padding:6px 10px;cursor:pointer}
     .btn.active{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
+    .btn-open-all{background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:.85rem;font-weight:600;padding:6px 12px;cursor:pointer;display:none}
+    .btn-open-all:hover{opacity:.9}
     .btn-action{width:100%;background:var(--accent);color:#fff;border:none;padding:12px;border-radius:6px;font-weight:600;cursor:pointer;margin-top:14px}
     .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:110}
     .sidebar{width:290px;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;z-index:120;transition:all .25s ease;overflow:hidden;white-space:nowrap}
@@ -413,8 +415,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .header-title-group{display:flex;flex-direction:column;gap:2px}
     .stream-header h2{font-size:1.15rem;font-weight:700;color:var(--bold);white-space:nowrap}
     .header-meta{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap}
-    .header-right{display:flex;align-items:center;gap:8px;flex-grow:1;justify-content:flex-end;max-width:560px}
-    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:6px;font-size:.85rem;outline:none;width:100%;max-width:300px}
+    .header-right{display:flex;align-items:center;gap:8px;flex-grow:1;justify-content:flex-end;max-width:620px}
+    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:6px;font-size:.85rem;outline:none;width:100%;max-width:280px}
     
     .cards-grid{padding:14px 16px calc(24px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
     .feed-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;transition:transform .15s}
@@ -454,8 +456,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       .header-left{width:100%}
       .stream-header h2{font-size:1rem;white-space:normal}
       .header-meta{font-size:.75rem;flex-wrap:wrap}
-      .header-right{width:100%;max-width:100%;display:flex;gap:6px}
-      .search-input{max-width:100%}
+      .header-right{width:100%;max-width:100%;display:flex;gap:6px;flex-wrap:wrap}
+      .search-input{max-width:100%;order:1}
       .cards-grid{grid-template-columns:1fr;gap:8px;padding:8px 8px calc(24px + env(safe-area-inset-bottom,0px))}
       .feed-card{padding:14px}
       .toast-container{left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));max-width:none}
@@ -523,8 +525,9 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       </div>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Durchsuchen..." oninput="filterSearch(this.value)">
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:6px;align-items:center">
           <button class="btn" id="saved-filter-btn" onclick="toggleSavedFilter()" title="Später lesen (Lesezeichen)">🔖 <span id="saved-count">0</span></button>
+          <button class="btn-open-all" id="open-all-btn" onclick="openAllBookmarked()" title="Alle gemerkten Artikel in neuen Tabs öffnen">Alle öffnen ↗</button>
           __DESKTOP_REFRESH_BTN__
           <button class="btn" onclick="toggleTheme()">🌓</button>
         </div>
@@ -572,6 +575,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const b = getStorage('bookmarked_news');
       const el = document.getElementById('saved-count');
       if(el) el.textContent = b.length;
+      const openBtn = document.getElementById('open-all-btn');
+      if(openBtn) {
+        openBtn.style.display = (onlySaved && b.length > 0) ? 'inline-block' : 'none';
+      }
     }
 
     function toggleBookmark(id){
@@ -594,6 +601,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       onlySaved = !onlySaved;
       const btn = document.getElementById('saved-filter-btn');
       if(btn) btn.classList.toggle('active', onlySaved);
+      updateBookmarkCount();
       applyFilters();
       const t = document.getElementById('current-title');
       if(t && onlySaved) {
@@ -601,6 +609,37 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       } else if(t) {
         t.textContent = window.IS_ARCHIVE ? `Archiv: ${liveArticles.length} News bis ${buildTime}` : `${liveArticles.length} News bis ${buildTime}`;
       }
+    }
+
+    function openAllBookmarked(){
+      const bList = getStorage('bookmarked_news');
+      if(!bList.length) return;
+      
+      const toOpen = liveArticles.filter(a => bList.includes(String(hStr(a.link||''))));
+      if(!toOpen.length) return;
+
+      // Öffnet alle gemerkten Links
+      toOpen.forEach(a => {
+        window.open(a.link, '_blank');
+      });
+
+      // Markiert alle als gelesen und leert die gemerkte Liste
+      const r = getStorage('read_news');
+      toOpen.forEach(a => {
+        const id = String(hStr(a.link||''));
+        if(!r.includes(id)) r.push(id);
+      });
+      setStorage('read_news', r);
+      setStorage('bookmarked_news', []);
+      
+      document.querySelectorAll('.feed-card.bookmarked').forEach(c => {
+        c.classList.remove('bookmarked');
+        c.classList.add('read');
+      });
+      
+      updateBookmarkCount();
+      showToast(`🚀 ${toOpen.length} Artikel geöffnet und als gelesen abgehakt.`, 4000);
+      toggleSavedFilter();
     }
 
     function toggleRead(id){
