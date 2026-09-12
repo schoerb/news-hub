@@ -390,6 +390,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .modal-body{overflow-y:auto;flex-grow:1;font-size:.88rem}
     .modal-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:12px}
     .btn{background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:1.05rem;padding:6px 10px;cursor:pointer}
+    .btn.active{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
     .btn-action{width:100%;background:var(--accent);color:#fff;border:none;padding:12px;border-radius:6px;font-weight:600;cursor:pointer;margin-top:14px}
     .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:110}
     .sidebar{width:290px;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;z-index:120;transition:all .25s ease;overflow:hidden;white-space:nowrap}
@@ -412,17 +413,23 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .header-title-group{display:flex;flex-direction:column;gap:2px}
     .stream-header h2{font-size:1.15rem;font-weight:700;color:var(--bold);white-space:nowrap}
     .header-meta{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap}
-    .header-right{display:flex;align-items:center;gap:8px;flex-grow:1;justify-content:flex-end;max-width:520px}
-    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:6px;font-size:.85rem;outline:none;width:100%;max-width:320px}
+    .header-right{display:flex;align-items:center;gap:8px;flex-grow:1;justify-content:flex-end;max-width:560px}
+    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:6px;font-size:.85rem;outline:none;width:100%;max-width:300px}
     
     .cards-grid{padding:14px 16px calc(24px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
     .feed-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;transition:transform .15s}
     .feed-card:hover{transform:translateY(-2px);background:var(--hover)}
+    
     .unread-dot-btn{background:none;border:none;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px}
     .unread-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);transition:all .2s}
     .feed-card.seen .unread-dot{background:var(--muted);box-shadow:none;opacity:.55}
     .feed-card.read .unread-dot{background:transparent;box-shadow:none;border:1.5px solid var(--muted);opacity:.35}
     .feed-card.read .feed-title{color:var(--muted)}
+    
+    .bookmark-btn{background:none;border:none;padding:0;cursor:pointer;font-size:.9rem;opacity:.4;transition:all .15s}
+    .bookmark-btn:hover{opacity:.8;transform:scale(1.15)}
+    .feed-card.bookmarked .bookmark-btn{opacity:1;filter:drop-shadow(0 0 4px rgba(234,179,8,.6))}
+    
     .feed-meta{display:flex;align-items:center;gap:6px;font-size:.75rem;margin-bottom:8px;flex-wrap:wrap}
     .feed-source{color:var(--accent);font-weight:600}
     .feed-time,.feed-others{color:var(--muted);font-size:.72rem}
@@ -433,6 +440,11 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .feed-thumb{width:100%;height:150px;object-fit:cover;border-radius:6px;margin-top:auto}
     .meta-clickable{color:var(--accent);cursor:pointer}
     .meta-clickable:hover{text-decoration:underline}
+
+    .toast-container{position:fixed;bottom:20px;right:20px;z-index:1000;display:none;max-width:380px;background:var(--sidebar);border:1px solid var(--border);border-radius:10px;padding:12px 16px;box-shadow:0 8px 24px rgba(0,0,0,.45);font-size:.85rem;color:var(--text);align-items:center;gap:12px;animation:slideUp .25s ease}
+    @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+    .toast-container a{color:var(--link);text-decoration:none;font-weight:600}
+    .toast-close{background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;padding:0 4px}
 
     @media (max-width:768px){
       .sidebar{position:fixed;inset:0 auto 0 0;transform:translateX(-100%);box-shadow:4px 0 24px rgba(0,0,0,.6)}
@@ -446,6 +458,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       .search-input{max-width:100%}
       .cards-grid{grid-template-columns:1fr;gap:8px;padding:8px 8px calc(24px + env(safe-area-inset-bottom,0px))}
       .feed-card{padding:14px}
+      .toast-container{left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));max-width:none}
     }
   </style>
 </head>
@@ -480,15 +493,9 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- In-App Workflow Modal statt Browser-Popups -->
-  <div id="workflow-modal" class="modal-overlay">
-    <div class="modal-card" style="max-width:440px">
-      <div class="modal-header">
-        <h2 id="wf-title">🔄 Feed-Aktualisierung</h2>
-        <button class="btn" onclick="toggleModal('workflow-modal',false)">&times;</button>
-      </div>
-      <div id="wf-body" class="modal-body"></div>
-    </div>
+  <div id="toast" class="toast-container">
+    <span id="toast-msg" style="flex:1"></span>
+    <button class="toast-close" onclick="hideToast()">&times;</button>
   </div>
 
   <div class="sidebar-backdrop" id="backdrop" onclick="toggleSidebar()"></div>
@@ -517,6 +524,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Durchsuchen..." oninput="filterSearch(this.value)">
         <div style="display:flex;gap:6px">
+          <button class="btn" id="saved-filter-btn" onclick="toggleSavedFilter()" title="Später lesen (Lesezeichen)">🔖 <span id="saved-count">0</span></button>
           __DESKTOP_REFRESH_BTN__
           <button class="btn" onclick="toggleTheme()">🌓</button>
         </div>
@@ -528,7 +536,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   <script>
     window.IS_ARCHIVE = __IS_ARCHIVE__;
     const configuredSources = __CONFIGURED_SOURCES__, feedHealth = __HEALTH_DATA__, buildTime = "__NOW_STR__";
-    let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', sIndex = -1, sTimer = null;
+    let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, sIndex = -1, sTimer = null, toastTimer = null;
 
     const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const hStr = s => { let h = 0; for(let i=0;i<(s||'').length;i++){ h = ((h<<5)-h)+s.charCodeAt(i); h |= 0; } return Math.abs(h); };
@@ -549,6 +557,52 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     const getStorage = k => { try { return JSON.parse(localStorage.getItem(k)||'[]'); } catch(e){ return []; } };
     const setStorage = (k,v) => { try { localStorage.setItem(k, JSON.stringify(v.slice(-1000))); } catch(e){} };
 
+    function showToast(htmlMsg, autoHideMs = 6000){
+      clearTimeout(toastTimer);
+      const t = document.getElementById('toast');
+      document.getElementById('toast-msg').innerHTML = htmlMsg;
+      t.style.display = 'flex';
+      if(autoHideMs > 0){
+        toastTimer = setTimeout(() => { t.style.display = 'none'; }, autoHideMs);
+      }
+    }
+    function hideToast(){ clearTimeout(toastTimer); document.getElementById('toast').style.display = 'none'; }
+
+    function updateBookmarkCount(){
+      const b = getStorage('bookmarked_news');
+      const el = document.getElementById('saved-count');
+      if(el) el.textContent = b.length;
+    }
+
+    function toggleBookmark(id){
+      let b = getStorage('bookmarked_news');
+      const idx = b.indexOf(id);
+      const el = document.querySelector(`.feed-card[data-id="${id}"]`);
+      if(idx >= 0){
+        b.splice(idx, 1);
+        if(el) el.classList.remove('bookmarked');
+      } else {
+        b.push(id);
+        if(el) el.classList.add('bookmarked');
+      }
+      setStorage('bookmarked_news', b);
+      updateBookmarkCount();
+      if(onlySaved) applyFilters();
+    }
+
+    function toggleSavedFilter(){
+      onlySaved = !onlySaved;
+      const btn = document.getElementById('saved-filter-btn');
+      if(btn) btn.classList.toggle('active', onlySaved);
+      applyFilters();
+      const t = document.getElementById('current-title');
+      if(t && onlySaved) {
+        t.textContent = `🔖 ${getStorage('bookmarked_news').length} Gemerkte News`;
+      } else if(t) {
+        t.textContent = window.IS_ARCHIVE ? `Archiv: ${liveArticles.length} News bis ${buildTime}` : `${liveArticles.length} News bis ${buildTime}`;
+      }
+    }
+
     function toggleRead(id){
       let r = getStorage('read_news'); const idx = r.indexOf(id);
       const el = document.querySelector(`.feed-card[data-id="${id}"]`);
@@ -565,7 +619,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       let totalDups = 0; counts = {};
       articles.forEach(a => { totalDups += (a.other_sources||[]).length; counts[a.source||"Unbekannt"] = (counts[a.source||"Unbekannt"]||0) + 1; });
       const tEl = document.getElementById('current-title');
-      if(tEl) tEl.textContent = window.IS_ARCHIVE ? `Archiv: ${articles.length} News bis ${buildTime}` : `${articles.length} News bis ${buildTime}`;
+      if(tEl && !onlySaved) tEl.textContent = window.IS_ARCHIVE ? `Archiv: ${articles.length} News bis ${buildTime}` : `${articles.length} News bis ${buildTime}`;
       const dEl = document.getElementById('header-dup-info'); if(dEl) dEl.innerHTML = `🧹 ${totalDups} Duplikate`;
 
       const sorted = Array.from(new Set([...configuredSources, ...Object.keys(counts)])).sort((a,b)=>(counts[b]||0)-(counts[a]||0));
@@ -575,17 +629,24 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           sorted.map(s => `<li><button class="source-btn" onclick="filterSource('${esc(s)}',this)"><span>${esc(s)}</span><span class="badge">${counts[s]||0}</span></button></li>`).join('');
       }
 
-      const rList = getStorage('read_news'), sList = getStorage('seen_news');
+      const rList = getStorage('read_news'), sList = getStorage('seen_news'), bList = getStorage('bookmarked_news');
+      updateBookmarkCount();
+
       const cont = document.getElementById('articles-container');
       if(cont) {
         cont.innerHTML = articles.map(a => {
           const id = hStr(a.link||''), oth = (a.other_sources&&a.other_sources.length)?`<span class="feed-others">• Auch bei: ${esc(a.other_sources.join(", "))}</span>`:'';
           const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" onerror="this.remove()">` : '';
-          const cls = (rList.includes(String(id))?' read':'') + (sList.includes(String(id))?' seen':'');
+          let cls = '';
+          if(rList.includes(String(id))) cls += ' read';
+          if(sList.includes(String(id))) cls += ' seen';
+          if(bList.includes(String(id))) cls += ' bookmarked';
+
           return `<article class="feed-card${cls}" data-id="${id}" data-sources="${esc([a.source||'',...(a.other_sources||[])].join(';;;'))}">
             <div class="feed-content">
               <div class="feed-meta">
-                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')"><span class="unread-dot"></span></button>
+                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Als gelesen / ungelesen"><span class="unread-dot"></span></button>
+                <button class="bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Für später merken">🔖</button>
                 <span class="feed-source">${esc(a.source||'Quelle')}</span><span class="feed-time">${relTime(a.published)}</span>${oth}
               </div>
               <a class="feed-title" href="${esc(a.link||'#')}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${esc(a.title||'Ohne Titel')}</a>
@@ -621,51 +682,49 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       activeSource = src; document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
       if(btn) btn.classList.add('active');
       const t = document.getElementById('current-title');
-      if(t) t.textContent = (src==='all')?(window.IS_ARCHIVE?`Archiv: ${liveArticles.length} News bis ${buildTime}`:`${liveArticles.length} News bis ${buildTime}`):`${src} (${counts[src]||0}) bis ${buildTime}`;
+      if(t && !onlySaved) t.textContent = (src==='all')?(window.IS_ARCHIVE?`Archiv: ${liveArticles.length} News bis ${buildTime}`:`${liveArticles.length} News bis ${buildTime}`):`${src} (${counts[src]||0}) bis ${buildTime}`;
       applyFilters(); if(window.innerWidth<=768) toggleSidebar();
     }
     function filterSearch(q){ clearTimeout(sTimer); sTimer = setTimeout(()=>{ searchQuery = q.toLowerCase().trim(); applyFilters(); }, 120); }
     function applyFilters(){
+      const bList = getStorage('bookmarked_news');
       document.querySelectorAll('.feed-card').forEach(c => {
+        const id = c.dataset.id;
+        const mSaved = !onlySaved || bList.includes(id);
         const mSrc = activeSource==='all' || (c.dataset.sources||'').split(';;;').includes(activeSource);
         const mQ = !searchQuery || c.textContent.toLowerCase().includes(searchQuery);
-        c.style.display = (mSrc && mQ) ? '' : 'none';
+        c.style.display = (mSaved && mSrc && mQ) ? '' : 'none';
       });
     }
 
-    // In-App Workflow Trigger ohne Browser-Popups
     function triggerWorkflow(){
       const tk = localStorage.getItem('gh_token');
       if(!tk){
-        showTokenPrompt();
+        showToast(`
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <span>GitHub PAT eingeben:</span>
+            <div style="display:flex;gap:6px">
+              <input type="password" id="toast-token-inp" class="search-input" style="padding:4px 8px;font-size:.8rem" placeholder="ghp_...">
+              <button class="btn" style="font-size:.8rem;padding:4px 8px" onclick="saveToastToken()">OK</button>
+            </div>
+          </div>
+        `, 0);
       } else {
         dispatchWorkflow(tk);
       }
     }
 
-    function showTokenPrompt(){
-      const b = document.getElementById('wf-body');
-      b.innerHTML = `
-        <p style="color:var(--muted);margin-bottom:12px">Bitte gib dein GitHub Personal Access Token (PAT) ein, um den Build zu starten:</p>
-        <input type="password" id="wf-token-input" class="search-input" style="max-width:100%;margin-bottom:10px" placeholder="ghp_...">
-        <button class="btn-action" style="margin-top:0" onclick="saveAndDispatch()">Starten</button>
-      `;
-      toggleModal('workflow-modal', true);
-      setTimeout(() => { const el = document.getElementById('wf-token-input'); if(el) el.focus(); }, 100);
-    }
-
-    function saveAndDispatch(){
-      const inp = document.getElementById('wf-token-input');
-      if(!inp || !inp.value.trim()) return;
-      const tk = inp.value.trim();
-      localStorage.setItem('gh_token', tk);
-      dispatchWorkflow(tk);
+    function saveToastToken(){
+      const el = document.getElementById('toast-token-inp');
+      if(el && el.value.trim()){
+        const val = el.value.trim();
+        localStorage.setItem('gh_token', val);
+        dispatchWorkflow(val);
+      }
     }
 
     async function dispatchWorkflow(tk){
-      const b = document.getElementById('wf-body');
-      b.innerHTML = '<p style="color:var(--muted);text-align:center;padding:16px 0">🚀 Starte GitHub Actions Workflow...</p>';
-      toggleModal('workflow-modal', true);
+      showToast('🚀 Starte Workflow im Hintergrund...', 0);
       try {
         const r = await fetch('https://api.github.com/repos/schoerb/news-hub/actions/workflows/deploy.yml/dispatches', {
           method:'POST',
@@ -673,26 +732,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           body:JSON.stringify({ref:'main'})
         });
         if(r.status === 204){
-          b.innerHTML = `
-            <div style="text-align:center;padding:10px 0">
-              <div style="font-size:1.8rem;margin-bottom:8px">✅</div>
-              <p style="font-weight:600;color:var(--bold);margin-bottom:6px">Workflow erfolgreich gestartet!</p>
-              <p style="font-size:.82rem;color:var(--muted);margin-bottom:16px">Der Build läuft jetzt auf GitHub Pages.</p>
-              <div style="display:flex;gap:10px">
-                <a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" class="nav-link" style="flex:1;margin-bottom:0;text-align:center;padding:10px">Zu Actions ↗</a>
-                <button class="btn" style="flex:1;padding:10px" onclick="toggleModal('workflow-modal',false)">Fertig</button>
-              </div>
-            </div>
-          `;
+          showToast('✅ Workflow gestartet! <a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener">Actions ↗</a>', 8000);
         } else {
-          b.innerHTML = `
-            <p style="color:#ef4444;margin-bottom:12px">Fehler beim Starten (HTTP ${r.status})</p>
-            <p style="font-size:.82rem;color:var(--muted);margin-bottom:12px">Ist das Token noch gültig und hat Zugriff auf Actions?</p>
-            <button class="btn" style="width:100%" onclick="localStorage.removeItem('gh_token');showTokenPrompt()">Anderes Token eingeben</button>
-          `;
+          showToast(`⚠️ Fehler (HTTP ${r.status}). <a href="#" onclick="localStorage.removeItem('gh_token');triggerWorkflow();return false;">Token ändern</a>`, 8000);
         }
       } catch(e){
-        b.innerHTML = `<p style="color:#ef4444;margin-bottom:12px">Netzwerkfehler: ${esc(e.message)}</p><button class="btn" style="width:100%" onclick="toggleModal('workflow-modal',false)">Schließen</button>`;
+        showToast('❌ Netzwerkfehler: ' + esc(e.message), 6000);
       }
     }
 
@@ -749,6 +794,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         const valid = new Set(globalArticles.map(a => String(hStr(a.link||''))));
         setStorage('read_news', getStorage('read_news').filter(id => valid.has(id)));
         setStorage('seen_news', getStorage('seen_news').filter(id => valid.has(id)));
+        setStorage('bookmarked_news', getStorage('bookmarked_news').filter(id => valid.has(id)));
 
         const now = Date.now(), c24 = new Date(now - 86400000), c48 = new Date(now - 172800000);
         liveArticles = globalArticles.filter(a => {
@@ -822,8 +868,9 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if(e.key==='k' && vis.length){ sIndex = Math.max(sIndex-1, 0); vis[sIndex].scrollIntoView({behavior:'smooth',block:'nearest'}); }
       if(e.key==='o' && sIndex>=0) window.open(vis[sIndex].querySelector('.feed-title').href, '_blank');
       if(e.key==='m' && sIndex>=0) toggleRead(vis[sIndex].dataset.id);
+      if(e.key==='b' && sIndex>=0) toggleBookmark(vis[sIndex].dataset.id);
       if(e.key==='/'){ e.preventDefault(); document.getElementById('search-box').focus(); }
-      if(e.key==='Escape'){ toggleModal('health-modal',false); toggleModal('dup-modal',false); toggleModal('workflow-modal',false); }
+      if(e.key==='Escape'){ toggleModal('health-modal',false); toggleModal('dup-modal',false); hideToast(); }
     });
 
     document.addEventListener('DOMContentLoaded', init);
