@@ -389,11 +389,21 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px}
     .modal-body{overflow-y:auto;flex-grow:1;font-size:.88rem}
     .modal-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:12px}
-    .btn{background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:1.05rem;padding:6px 10px;cursor:pointer}
+    
+    /* Einheitliche Höhe & Padding für alle Header-Buttons */
+    .btn, .btn-open-all{
+      background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);
+      font-size:1.0rem;line-height:1.2;padding:6px 10px;cursor:pointer;flex-shrink:0;
+      display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
+    }
     .btn.active{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
-    .btn-open-all{background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:.85rem;font-weight:600;padding:6px 12px;cursor:pointer;display:none}
+    .btn-open-all{
+      background:var(--accent);border-color:var(--accent);color:#fff;font-size:.85rem;
+      font-weight:600;display:none;white-space:nowrap;
+    }
     .btn-open-all:hover{opacity:.9}
     .btn-action{width:100%;background:var(--accent);color:#fff;border:none;padding:12px;border-radius:6px;font-weight:600;cursor:pointer;margin-top:14px}
+    
     .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:110}
     .sidebar{width:290px;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;z-index:120;transition:all .25s ease;overflow:hidden;white-space:nowrap}
     .sidebar.collapsed{width:0!important;border:none!important;visibility:hidden}
@@ -415,8 +425,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .header-title-group{display:flex;flex-direction:column;gap:2px}
     .stream-header h2{font-size:1.15rem;font-weight:700;color:var(--bold);white-space:nowrap}
     .header-meta{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap}
-    .header-right{display:flex;align-items:center;gap:8px;flex-grow:1;justify-content:flex-end;max-width:620px}
-    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:6px;font-size:.85rem;outline:none;width:100%;max-width:280px}
+    
+    /* Suchleiste + Buttons bündig in genau einer Zeile */
+    .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:580px;flex-wrap:nowrap}
+    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 140px;min-width:90px;height:34px;box-sizing:border-box}
     
     .cards-grid{padding:14px 16px calc(24px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
     .feed-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;transition:transform .15s}
@@ -456,8 +468,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       .header-left{width:100%}
       .stream-header h2{font-size:1rem;white-space:normal}
       .header-meta{font-size:.75rem;flex-wrap:wrap}
-      .header-right{width:100%;max-width:100%;display:flex;gap:6px;flex-wrap:wrap}
-      .search-input{max-width:100%;order:1}
+      
+      .header-right{width:100%;max-width:100%;display:flex;gap:6px;flex-wrap:nowrap;justify-content:space-between}
+      .search-input{flex:1 1 auto;min-width:80px;max-width:none}
+      .btn, .btn-open-all{padding:6px 8px;font-size:.92rem;height:34px}
+      .btn-open-all{font-size:.75rem}
+      
       .cards-grid{grid-template-columns:1fr;gap:8px;padding:8px 8px calc(24px + env(safe-area-inset-bottom,0px))}
       .feed-card{padding:14px}
       .toast-container{left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));max-width:none}
@@ -525,12 +541,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       </div>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Durchsuchen..." oninput="filterSearch(this.value)">
-        <div style="display:flex;gap:6px;align-items:center">
-          <button class="btn" id="saved-filter-btn" onclick="toggleSavedFilter()" title="Später lesen (Lesezeichen)">🔖 <span id="saved-count">0</span></button>
-          <button class="btn-open-all" id="open-all-btn" onclick="openAllBookmarked()" title="Alle gemerkten Artikel in neuen Tabs öffnen">Alle öffnen ↗</button>
-          __DESKTOP_REFRESH_BTN__
-          <button class="btn" onclick="toggleTheme()">🌓</button>
-        </div>
+        <button class="btn-open-all" id="open-all-btn" onclick="openAllBookmarked()" title="Alle gemerkten Artikel in neuen Tabs öffnen">Alle öffnen ↗</button>
+        <button class="btn" id="saved-filter-btn" onclick="toggleSavedFilter()" title="Später lesen (Lesezeichen)">🔖 <span id="saved-count">0</span></button>
+        __DESKTOP_REFRESH_BTN__
+        <button class="btn" onclick="toggleTheme()">🌓</button>
       </div>
     </div>
     <div id="articles-container" class="cards-grid"></div>
@@ -577,7 +591,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if(el) el.textContent = b.length;
       const openBtn = document.getElementById('open-all-btn');
       if(openBtn) {
-        openBtn.style.display = (onlySaved && b.length > 0) ? 'inline-block' : 'none';
+        openBtn.style.display = (onlySaved && b.length > 0) ? 'inline-flex' : 'none';
       }
     }
 
@@ -618,12 +632,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const toOpen = liveArticles.filter(a => bList.includes(String(hStr(a.link||''))));
       if(!toOpen.length) return;
 
-      // Öffnet alle gemerkten Links
       toOpen.forEach(a => {
         window.open(a.link, '_blank');
       });
 
-      // Markiert alle als gelesen und leert die gemerkte Liste
       const r = getStorage('read_news');
       toOpen.forEach(a => {
         const id = String(hStr(a.link||''));
@@ -638,7 +650,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       });
       
       updateBookmarkCount();
-      showToast(`🚀 ${toOpen.length} Artikel geöffnet und als gelesen abgehakt.`, 4000);
+      showToast(`🚀 ${toOpen.length} Artikel geöffnet und als gelesen markiert.`, 4000);
       toggleSavedFilter();
     }
 
@@ -743,8 +755,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           <div style="display:flex;flex-direction:column;gap:6px">
             <span>GitHub PAT eingeben:</span>
             <div style="display:flex;gap:6px">
-              <input type="password" id="toast-token-inp" class="search-input" style="padding:4px 8px;font-size:.8rem" placeholder="ghp_...">
-              <button class="btn" style="font-size:.8rem;padding:4px 8px" onclick="saveToastToken()">OK</button>
+              <input type="password" id="toast-token-inp" class="search-input" style="padding:4px 8px;font-size:.8rem;height:28px" placeholder="ghp_...">
+              <button class="btn" style="font-size:.8rem;padding:4px 8px;height:28px" onclick="saveToastToken()">OK</button>
             </div>
           </div>
         `, 0);
