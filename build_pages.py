@@ -51,6 +51,19 @@ session.headers.update({
     "Accept": "application/rss+xml, application/xml, text/xml, */*;q=0.8",
 })
 
+# --- Text Sanitizer ---
+def sanitize_text(text: str) -> str:
+    """Entfernt doppelte HTML-Entities und unsaubere Zeichenrekursionen."""
+    if not text:
+        return ""
+    prev = ""
+    curr = str(text)
+    # Mehrfach unescapen (z. B. für Fälle wie &amp;quot;)
+    while curr != prev:
+        prev = curr
+        curr = html.unescape(curr)
+    return " ".join(curr.split()).strip()
+
 # --- Krypto-Helfer ---
 def openssl_kdf(password: bytes, salt: bytes, key_len=32, iv_len=16) -> tuple[bytes, bytes]:
     d = b""
@@ -187,6 +200,7 @@ def load_cached_state():
             pass
 
     for a in arts:
+        a["title"] = sanitize_text(a.get("title", ""))
         a["_ts"] = parse_timestamp(a.get("published"))
     return arts, meta
 
@@ -239,8 +253,8 @@ def fetch_all_feeds(feeds, cache_meta):
                 if ts > cutoff:
                     summary = " ".join(re.sub(r"<[^>]+>", " ", e.get("summary", "")).split())[:350]
                     items.append({
-                        "title": e.title.strip(),
-                        "summary": summary,
+                        "title": sanitize_text(e.title),
+                        "summary": sanitize_text(summary),
                         "link": clean_url(e.link.strip()),
                         "image": extract_image(e),
                         "source": f["title"].strip(),
@@ -326,7 +340,7 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
 # --- Gemini API ---
 def summarize_chunk_with_gemini(client, chunk, max_retries=3):
     payload = [{"id": i, "original_title": a["title"], "source": a["source"], "raw_text": a["summary"], "has_image": bool(a.get("image"))} for i, a in enumerate(chunk)]
-    prompt = f"Chefredakteur Tech-News:\n1. 'german_title': Übersetze englische Titel vollständig ins Deutsche (Kein Clickbait).\n2. 'summary': Genau 1 deutscher Satz. Schlüsselwörter mit **fett** markieren.\n3. 'use_image': True nur bei echten Geräten/Screenshots/Charts.\nArtikel:\n{json.dumps(payload, ensure_ascii=False)}"
+    prompt = f"Chefredakteur Tech-News:\n1. 'german_title': Übersetze englische Titel vollständig ins Deutsche (Kein Clickbait, keine HTML-Entities).\n2. 'summary': Genau 1 deutscher Satz. Schlüsselwörter mit **fett** markieren.\n3. 'use_image': True nur bei echten Geräten/Screenshots/Charts.\nArtikel:\n{json.dumps(payload, ensure_ascii=False)}"
 
     for attempt in range(max_retries):
         model = "gemini-3.5-flash-lite" if attempt == 0 else "gemini-3.6-flash"
@@ -340,9 +354,10 @@ def summarize_chunk_with_gemini(client, chunk, max_retries=3):
             for it in parsed.items:
                 if 0 <= it.id < len(chunk):
                     orig = chunk[it.id]
-                    clean_s = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", html.escape((it.summary or "").strip())) or html.escape(orig.get("summary", ""))[:180]
+                    clean_title = sanitize_text(it.german_title or orig["title"])
+                    clean_s = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", sanitize_text(it.summary or "")) or sanitize_text(orig.get("summary", ""))[:180]
                     out.append({
-                        "title": html.escape((it.german_title or "").strip()) or orig["title"],
+                        "title": clean_title,
                         "link": orig["link"], "source": orig["source"], "other_sources": orig.get("other_sources", []),
                         "merged_details": orig.get("merged_details", []), "summary": clean_s,
                         "image": orig["image"] if it.use_image else None, "published": orig["published"], "_ts": orig.get("_ts", 0),
@@ -351,8 +366,8 @@ def summarize_chunk_with_gemini(client, chunk, max_retries=3):
         except Exception as err:
             time.sleep(22 + (attempt * 6) if ("429" in str(err) or "RESOURCE_EXHAUSTED" in str(err)) else 2 ** (attempt + 1))
 
-    return [{"title": o["title"], "link": o["link"], "source": o["source"], "other_sources": o.get("other_sources", []),
-             "merged_details": o.get("merged_details", []), "summary": html.escape(o["summary"]), "image": o["image"],
+    return [{"title": sanitize_text(o["title"]), "link": o["link"], "source": o["source"], "other_sources": o.get("other_sources", []),
+             "merged_details": o.get("merged_details", []), "summary": sanitize_text(o["summary"]), "image": o["image"],
              "published": o["published"], "_ts": o.get("_ts", 0)} for o in chunk]
 
 
@@ -390,7 +405,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .modal-body{overflow-y:auto;flex-grow:1;font-size:.88rem}
     .modal-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:12px}
     
-    /* Einheitliche Höhe & Padding für alle Header-Buttons */
     .btn, .btn-open-all{
       background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);
       font-size:1.0rem;line-height:1.2;padding:6px 10px;cursor:pointer;flex-shrink:0;
@@ -426,7 +440,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .stream-header h2{font-size:1.15rem;font-weight:700;color:var(--bold);white-space:nowrap}
     .header-meta{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap}
     
-    /* Suchleiste + Buttons bündig in genau einer Zeile */
     .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:580px;flex-wrap:nowrap}
     .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 140px;min-width:90px;height:34px;box-sizing:border-box}
     
@@ -434,8 +447,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .feed-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;transition:transform .15s}
     .feed-card:hover{transform:translateY(-2px);background:var(--hover)}
     
-    .unread-dot-btn{background:none;border:none;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px}
-    .unread-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);transition:all .2s}
+    .unread-dot-btn{background:none;border:none;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px}
+    .unread-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);transition:all .2s}
     .feed-card.seen .unread-dot{background:var(--muted);box-shadow:none;opacity:.55}
     .feed-card.read .unread-dot{background:transparent;box-shadow:none;border:1.5px solid var(--muted);opacity:.35}
     .feed-card.read .feed-title{color:var(--muted)}
@@ -555,12 +568,23 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     const configuredSources = __CONFIGURED_SOURCES__, feedHealth = __HEALTH_DATA__, buildTime = "__NOW_STR__";
     let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, sIndex = -1, sTimer = null, toastTimer = null;
 
-    const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    // Zuverlässige HTML-Entity- und Sonderzeichenauflösung
+    const docElem = document.createElement('textarea');
+    function cleanTitle(s) {
+      if (!s) return '';
+      docElem.innerHTML = s;
+      let val = docElem.value;
+      if (val.includes('&')) { docElem.innerHTML = val; val = docElem.value; }
+      return val.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0*39;/g, "'").replace(/&apos;/g, "'");
+    }
+
+    const esc = s => cleanTitle(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const hStr = s => { let h = 0; for(let i=0;i<(s||'').length;i++){ h = ((h<<5)-h)+s.charCodeAt(i); h |= 0; } return Math.abs(h); };
+    
     const relTime = d => {
       if(!d) return ''; const diff = Math.floor((Date.now() - new Date(d))/1000);
-      if(isNaN(diff)) return ''; if(diff < 60) return '• gerade'; if(diff < 3600) return `• vor ${Math.floor(diff/60)}m`;
-      if(diff < 86400) return `• vor ${Math.floor(diff/3600)}h`; return `• vor ${Math.floor(diff/86400)}d`;
+      if(isNaN(diff)) return ''; if(diff < 60) return 'gerade'; if(diff < 3600) return `vor ${Math.floor(diff/60)}m`;
+      if(diff < 86400) return `vor ${Math.floor(diff/3600)}h`; return `vor ${Math.floor(diff/86400)}d`;
     };
 
     function initTheme(){ document.documentElement.setAttribute('data-theme', localStorage.getItem('hub_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')); }
@@ -696,12 +720,14 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           return `<article class="feed-card${cls}" data-id="${id}" data-sources="${esc([a.source||'',...(a.other_sources||[])].join(';;;'))}">
             <div class="feed-content">
               <div class="feed-meta">
-                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Als gelesen / ungelesen"><span class="unread-dot"></span></button>
                 <button class="bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Für später merken">🔖</button>
-                <span class="feed-source">${esc(a.source||'Quelle')}</span><span class="feed-time">${relTime(a.published)}</span>${oth}
+                <span class="feed-source">${esc(a.source||'Quelle')}</span>
+                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Als gelesen / ungelesen"><span class="unread-dot"></span></button>
+                <span class="feed-time">${relTime(a.published)}</span>
+                ${oth}
               </div>
-              <a class="feed-title" href="${esc(a.link||'#')}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${esc(a.title||'Ohne Titel')}</a>
-              <p class="feed-summary">${a.summary||''}</p>
+              <a class="feed-title" href="${esc(a.link||'#')}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${cleanTitle(a.title||'Ohne Titel')}</a>
+              <p class="feed-summary">${cleanTitle(a.summary||'')}</p>
             </div>${img}
           </article>`;
         }).join('');
@@ -723,7 +749,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
             <strong>${esc(src)}</strong><span class="badge">${items.length} ▾</span>
           </div>
           <div id="dd-${i}" style="display:none;padding-left:8px;border-left:2px solid var(--accent);margin-top:4px">
-            ${items.map(it=>`<div style="margin-bottom:6px">${it.is_legacy?esc(it.title):`<a href="${esc(it.link)}" target="_blank" rel="noopener" style="color:var(--link);text-decoration:none">🔗 ${esc(it.title)}</a>`}<div style="color:var(--muted);font-size:.72rem">↳ Mit: "${esc(it.matched_with)}"</div></div>`).join('')}
+            ${items.map(it=>`<div style="margin-bottom:6px">${it.is_legacy?cleanTitle(it.title):`<a href="${esc(it.link)}" target="_blank" rel="noopener" style="color:var(--link);text-decoration:none">🔗 ${cleanTitle(it.title)}</a>`}<div style="color:var(--muted);font-size:.72rem">↳ Mit: "${cleanTitle(it.matched_with)}"</div></div>`).join('')}
           </div>
         </div>`).join('');
       toggleModal('dup-modal', true);
