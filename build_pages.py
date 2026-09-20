@@ -1,33 +1,21 @@
-import base64
-import datetime
-import hashlib
-import html
-import json
-import os
-import re
-import time
-import urllib.parse
-import warnings
-import xml.etree.ElementTree as ET
-import zoneinfo
+import base64, datetime, hashlib, html, json, os, re, time, urllib.parse, warnings
+import xml.etree.ElementTree as ET, zoneinfo
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 
 warnings.filterwarnings("ignore", category=UserWarning, module="google.genai")
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-import feedparser
+import feedparser, requests
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
-import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
 # --- Konfiguration ---
 DEFAULT_PRIO = 1
-MAX_RETENTION_HOURS = 48
-MAX_DEDUP_HOURS = 20
+MAX_RETENTION_HOURS, MAX_DEDUP_HOURS = 48, 20
 REMOTE_DATA_URL = "https://schoerb.github.io/news-hub/data.json"
 REMOTE_META_URL = "https://schoerb.github.io/news-hub/cache_meta.json"
 BERLIN_TZ = zoneinfo.ZoneInfo("Europe/Berlin")
@@ -42,183 +30,120 @@ STOPWORDS = {
     "the", "a", "an", "and", "or", "to", "for", "of", "with", "by", "from", "is", "are", "new", "out"
 }
 
-# --- Connection Pool ---
+# --- Connection Pool mit GZIP/Brotli Unterstützung ---
 session = requests.Session()
-adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=Retry(total=2, backoff_factor=0.3))
+adapter = HTTPAdapter(pool_connections=25, pool_maxsize=25, max_retries=Retry(total=2, backoff_factor=0.2))
 session.mount("https://", adapter)
 session.mount("http://", adapter)
 session.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36",
     "Accept": "application/rss+xml, application/xml, text/xml, */*;q=0.8",
+    "Accept-Encoding": "gzip, deflate",
 })
 
-# --- Text Sanitizer ---
-def sanitize_text(text: str) -> str:
-    if not text:
-        return ""
-    prev = ""
-    curr = str(text)
-    while curr != prev:
-        prev = curr
-        curr = html.unescape(curr)
-    return " ".join(curr.split()).strip()
+def clean_text(s: str) -> str:
+    if not s: return ""
+    for _ in range(2): s = html.unescape(s)
+    return " ".join(re.sub(r"<[^>]+>", " ", s).split()).strip()
 
-# --- Krypto-Helfer ---
-def openssl_kdf(password: bytes, salt: bytes, key_len=32, iv_len=16) -> tuple[bytes, bytes]:
+def clean_url(url: str) -> str:
+    if not url: return ""
+    p = urllib.parse.urlsplit(url)
+    q = [(k, v) for k, v in urllib.parse.parse_qsl(p.query, keep_blank_values=True)
+         if not (k.startswith("utm_") or k in ("wt_mc", "fbclid", "ref", "source"))]
+    return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path, urllib.parse.urlencode(q), p.fragment))
+
+# --- Krypto ---
+def openssl_kdf(pw: bytes, salt: bytes, klen=32, ivlen=16) -> tuple[bytes, bytes]:
     d = b""
-    while len(d) < (key_len + iv_len):
-        d += hashlib.md5(d[-16:] + password + salt if d else password + salt).digest()
-    return d[:key_len], d[key_len:key_len + iv_len]
-
+    while len(d) < (klen + ivlen):
+        d += hashlib.md5(d[-16:] + pw + salt if d else pw + salt).digest()
+    return d[:klen], d[klen:klen + ivlen]
 
 def encrypt_payload(data: str, pw: str) -> str:
-    if not pw:
-        return data
+    if not pw: return data
     salt = os.urandom(8)
     key, iv = openssl_kdf(pw.encode(), salt)
     pad = 16 - (len(data.encode()) % 16)
     c = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
     return base64.b64encode(b"Salted__" + salt + c.update(data.encode() + bytes([pad] * pad)) + c.finalize()).decode()
 
-
 def decrypt_payload(enc: str, pw: str) -> str:
-    if not pw:
-        return enc
+    if not pw: return enc
     try:
         raw = base64.b64decode(enc)
-        if not raw.startswith(b"Salted__"):
-            return enc
+        if not raw.startswith(b"Salted__"): return enc
         key, iv = openssl_kdf(pw.encode(), raw[8:16])
         c = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
         d = c.update(raw[16:]) + c.finalize()
         return d[:-d[-1]].decode("utf-8")
-    except Exception:
-        return ""
-
+    except Exception: return ""
 
 def hash_feed(url: str) -> str:
     return hashlib.sha256((url + os.environ.get("PAGE_PASSWORD", "static_news_salt")).encode()).hexdigest()[:16]
 
-
-# --- Pydantic Schemas ---
-class DeltaItem(BaseModel):
-    id: int
-    german_title: str = Field(description="Zwingend auf DEUTSCH übersetzen. Kein Clickbait.")
-    summary: str = Field(description="Genau 1 deutscher Satz mit **fett** hervorgehobenen Begriffen.")
-    use_image: bool = Field(default=False)
-
-
-class DeltaBatchResponse(BaseModel):
-    items: list[DeltaItem]
-
-
-def clean_url(url: str) -> str:
-    if not url:
-        return ""
-    p = urllib.parse.urlsplit(url)
-    q = [(k, v) for k, v in urllib.parse.parse_qsl(p.query, keep_blank_values=True)
-         if not (k.startswith("utm_") or k in ("wt_mc", "fbclid", "ref", "source"))]
-    return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path, urllib.parse.urlencode(q), p.fragment))
-
-
+# --- Feed Parsing ---
 def parse_opml():
     raw = os.environ.get("FEEDS_OPML", "").strip()
     prios = json.loads(os.environ.get("FEED_PRIORITIES", "{}"))
-    try:
-        tree = ET.fromstring(raw) if raw else (ET.parse("feeds.opml").getroot() if os.path.exists("feeds.opml") else None)
-    except Exception:
-        return []
-    if tree is None:
-        return []
-    feeds = []
-    for n in tree.findall(".//outline[@xmlUrl]"):
-        u = n.get("xmlUrl", "").strip()
-        if u:
-            name = (n.get("text") or n.get("title") or "Feed").strip()
-            prio = int(n.get("priority")) if n.get("priority", "").isdigit() else prios.get(name, DEFAULT_PRIO)
-            feeds.append({"title": name, "url": u, "priority": prio})
-    return feeds
-
+    try: tree = ET.fromstring(raw) if raw else (ET.parse("feeds.opml").getroot() if os.path.exists("feeds.opml") else None)
+    except Exception: return []
+    if tree is None: return []
+    return [{"title": (n.get("text") or n.get("title") or "Feed").strip(), "url": n.get("xmlUrl", "").strip(),
+             "priority": int(n.get("priority")) if n.get("priority", "").isdigit() else prios.get(n.get("text", "").strip(), DEFAULT_PRIO)}
+            for n in tree.findall(".//outline[@xmlUrl]") if n.get("xmlUrl", "").strip()]
 
 def extract_image(e):
     for k in ("media_content", "media_thumbnail"):
         if e.get(k):
             u = e[k][0].get("url")
-            if u and not any(b in u.lower() for b in ["favicon", "avatar", "logo", "tracking", "1x1"]):
-                return u
+            if u and not any(b in u.lower() for b in ["favicon", "avatar", "logo", "tracking", "1x1"]): return u
     for enc in e.get("enclosures", []):
-        if enc.get("type", "").startswith("image/") and enc.get("href"):
-            return enc.get("href")
+        if enc.get("type", "").startswith("image/") and enc.get("href"): return enc.get("href")
     c = e.get("summary", "") + (e.content[0].get("value", "") if "content" in e and e.content else "")
     m = re.search(r'<img[^>]+src=["\']?([^\s"\'<>]+\.(?:jpg|jpeg|png|webp))', c, re.I)
     return m.group(1) if m and not any(b in m.group(1).lower() for b in ["favicon", "pixel", "1x1"]) else None
 
-
-def parse_timestamp(iso_val) -> int:
-    if isinstance(iso_val, (int, float)):
-        return int(iso_val)
-    if not iso_val:
-        return 0
-    try:
-        return int(datetime.datetime.fromisoformat(str(iso_val).replace("Z", "+00:00")).timestamp())
-    except Exception:
-        return 0
-
+def parse_ts(val) -> int:
+    if isinstance(val, (int, float)): return int(val)
+    if not val: return 0
+    try: return int(datetime.datetime.fromisoformat(str(val).replace("Z", "+00:00")).timestamp())
+    except Exception: return 0
 
 def load_cached_state():
-    arts, meta = [], {}
-    pw = os.environ.get("PAGE_PASSWORD", "")
+    arts, meta, pw = [], {}, os.environ.get("PAGE_PASSWORD", "")
     force = os.environ.get("FORCE_REFRESH", "").lower() in ("true", "1")
     raw = ""
-
-    # 1. Daten laden
-    if os.path.exists("public/data.json"):
-        try:
-            with open("public/data.json", "r", encoding="utf-8") as f:
-                raw = f.read().strip()
-        except Exception:
-            pass
-    elif REMOTE_DATA_URL and not force:
-        try:
-            r = session.get(REMOTE_DATA_URL, timeout=(3.05, 5.0))
-            if r.ok:
-                raw = r.text.strip()
-        except Exception:
-            pass
-
-    if raw and raw != "[]":
-        try:
-            arts = json.loads(decrypt_payload(raw, pw) if pw else raw)
-        except Exception:
-            pass
-
-    # 2. HTTP-Metadaten laden (Lokal oder von GitHub Pages Host)
-    if not force:
-        if os.path.exists("cache_meta.json"):
-            try:
-                with open("cache_meta.json", "r", encoding="utf-8") as f:
-                    meta = json.load(f)
-            except Exception:
-                pass
-        elif os.path.exists("public/cache_meta.json"):
-            try:
-                with open("public/cache_meta.json", "r", encoding="utf-8") as f:
-                    meta = json.load(f)
-            except Exception:
-                pass
-        elif REMOTE_META_URL:
-            try:
-                r = session.get(REMOTE_META_URL, timeout=(3.05, 4.0))
-                if r.ok:
-                    meta = r.json()
-            except Exception:
-                pass
+    for path, remote in [("public/data.json", REMOTE_DATA_URL), ("cache_meta.json", REMOTE_META_URL)]:
+        if path == "public/data.json":
+            if os.path.exists(path):
+                try: raw = open(path, "r", encoding="utf-8").read().strip()
+                except Exception: pass
+            elif remote and not force:
+                try:
+                    r = session.get(remote, timeout=(3.05, 4.5))
+                    if r.ok: raw = r.text.strip()
+                except Exception: pass
+            if raw and raw != "[]":
+                try: arts = json.loads(decrypt_payload(raw, pw) if pw else raw)
+                except Exception: pass
+        elif not force:
+            if os.path.exists(path):
+                try: meta = json.load(open(path, "r", encoding="utf-8"))
+                except Exception: pass
+            elif os.path.exists(f"public/{path}"):
+                try: meta = json.load(open(f"public/{path}", "r", encoding="utf-8"))
+                except Exception: pass
+            elif remote:
+                try:
+                    r = session.get(remote, timeout=(3.05, 3.5))
+                    if r.ok: meta = r.json()
+                except Exception: pass
 
     for a in arts:
-        a["title"] = sanitize_text(a.get("title", ""))
-        a["_ts"] = parse_timestamp(a.get("published"))
+        a["title"] = clean_text(a.get("title", ""))
+        a["_ts"] = parse_ts(a.get("published"))
     return arts, meta
-
 
 def fetch_all_feeds(feeds, cache_meta):
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -229,33 +154,22 @@ def fetch_all_feeds(feeds, cache_meta):
         url, key = f["url"], hash_feed(f["url"])
         headers = {}
         if key in cache_meta:
-            if "etag" in cache_meta[key]:
-                headers["If-None-Match"] = cache_meta[key]["etag"]
-            if "modified" in cache_meta[key]:
-                headers["If-Modified-Since"] = cache_meta[key]["modified"]
-
+            if "etag" in cache_meta[key]: headers["If-None-Match"] = cache_meta[key]["etag"]
+            if "modified" in cache_meta[key]: headers["If-Modified-Since"] = cache_meta[key]["modified"]
         try:
             p = urllib.parse.urlsplit(url)
-            if p.scheme and p.netloc:
-                headers["Referer"] = f"{p.scheme}://{p.netloc}/"
-
-            r = session.get(url, headers=headers, timeout=(3.05, 6.0))
-            if r.status_code == 304:
-                return [], {"title": f["title"], "status": "ok", "code": 304}
-            if not r.ok:
-                return [], {"title": f["title"], "status": "error", "code": r.status_code}
+            if p.scheme and p.netloc: headers["Referer"] = f"{p.scheme}://{p.netloc}/"
+            r = session.get(url, headers=headers, timeout=(3.05, 5.5))
+            if r.status_code == 304: return [], {"title": f["title"], "status": "ok", "code": 304}
+            if not r.ok: return [], {"title": f["title"], "status": "error", "code": r.status_code}
 
             m = {}
-            if "etag" in r.headers:
-                m["etag"] = r.headers["etag"]
-            if "last-modified" in r.headers:
-                m["modified"] = r.headers["last-modified"]
-            if m:
-                new_meta[key] = m
+            if "etag" in r.headers: m["etag"] = r.headers["etag"]
+            if "last-modified" in r.headers: m["modified"] = r.headers["last-modified"]
+            if m: new_meta[key] = m
 
             parsed = feedparser.parse(r.content)
-            if parsed.bozo and not parsed.entries:
-                return [], {"title": f["title"], "status": "parse_error", "code": r.status_code}
+            if parsed.bozo and not parsed.entries: return [], {"title": f["title"], "status": "parse_error", "code": r.status_code}
 
             items = []
             for e in parsed.entries[:15]:
@@ -266,10 +180,9 @@ def fetch_all_feeds(feeds, cache_meta):
                         break
                 ts = int(dt.timestamp()) if dt else int(now.timestamp())
                 if ts > cutoff:
-                    summary = " ".join(re.sub(r"<[^>]+>", " ", e.get("summary", "")).split())[:350]
                     items.append({
-                        "title": sanitize_text(e.title),
-                        "summary": sanitize_text(summary),
+                        "title": clean_text(e.title),
+                        "summary": clean_text(e.get("summary", ""))[:320],
                         "link": clean_url(e.link.strip()),
                         "image": extract_image(e),
                         "source": f["title"].strip(),
@@ -282,65 +195,45 @@ def fetch_all_feeds(feeds, cache_meta):
             return [], {"title": f["title"], "status": "exception", "code": "timeout"}
 
     all_items = []
-    with ThreadPoolExecutor(max_workers=12) as ex:
+    with ThreadPoolExecutor(max_workers=14) as ex:
         for items, h in ex.map(_fetch, feeds):
             all_items.extend(items)
             health.append(h)
     return all_items, new_meta, health
 
-
-# --- Deduplizierung ---
-def clean_stem(w: str) -> str:
-    for end in ("s", "n", "en", "er", "es", "e"):
-        if w.endswith(end) and len(w) > 4:
-            return w[:-len(end)]
-    return w
-
-
+# --- Schnelle Deduplizierung ---
 def extract_features(title: str):
     words = re.sub(r"[^\w\s\.]", " ", title.lower()).split()
     nums = {w for w in words if any(c.isdigit() for c in w) and len(w) >= 2}
-    kws = {clean_stem(w) for w in words if w not in STOPWORDS and len(w) > 2 and w not in nums}
+    kws = {w[:-2] if len(w) > 5 and w.endswith(("en", "er", "es")) else w for w in words if w not in STOPWORDS and len(w) > 2 and w not in nums}
     return kws, nums
-
 
 def is_dup(t_a: str, t_b: str, feat_a, feat_b) -> bool:
     kw_a, num_a = feat_a
     kw_b, num_b = feat_b
-    if (num_a & num_b) and len(kw_a & kw_b) >= 2:
-        return True
+    if (num_a & num_b) and len(kw_a & kw_b) >= 2: return True
     sub = {wa[:5] for wa in kw_a for wb in kw_b if len(wa) >= 5 and len(wb) >= 5 and wa[:5] == wb[:5]}
     min_len = min(len(kw_a), len(kw_b))
-    if min_len >= 3 and (len(kw_a & kw_b | sub) / min_len) >= DEDUP_OVERLAP:
-        return True
+    if min_len >= 3 and (len(kw_a & kw_b | sub) / min_len) >= DEDUP_OVERLAP: return True
     if (kw_a & kw_b or sub) and min(len(t_a), len(t_b)) / max(len(t_a), len(t_b)) >= 0.65:
-        return SequenceMatcher(None, re.sub(r"[^\w\s]", "", t_a.lower()), re.sub(r"[^\w\s]", "", t_b.lower())).ratio() >= DEDUP_RATIO
+        return SequenceMatcher(None, t_a.lower(), t_b.lower()).ratio() >= DEDUP_RATIO
     return False
-
 
 def consolidate_articles(articles: list[dict]) -> list[dict]:
     sorted_arts = sorted(articles, key=lambda x: x.get("priority", DEFAULT_PRIO), reverse=True)
-    res, feats = [], []
-    max_diff = MAX_DEDUP_HOURS * 3600
-
+    res, feats, max_diff = [], [], MAX_DEDUP_HOURS * 3600
     for item in sorted_arts:
-        feat = extract_features(item["title"])
-        ts = item.get("_ts", 0)
+        feat, ts = extract_features(item["title"]), item.get("_ts", 0)
         match = next((ex for i, ex in enumerate(res)
                       if not (ts and ex.get("_ts") and abs(ts - ex["_ts"]) > max_diff) and is_dup(item["title"], ex["title"], feat, feats[i])), None)
         if match:
             src = item.get("source")
             others = match.setdefault("other_sources", [])
-            if src and src != match.get("source") and src not in others:
-                others.append(src)
+            if src and src != match.get("source") and src not in others: others.append(src)
             for osrc in item.get("other_sources", []):
-                if osrc != match.get("source") and osrc not in others:
-                    others.append(osrc)
+                if osrc != match.get("source") and osrc not in others: others.append(osrc)
             match.setdefault("merged_details", []).append({
-                "source": src or "Unbekannt",
-                "title": item.get("title", ""),
-                "link": item.get("link", ""),
-                "matched_with": match.get("title", "")
+                "source": src or "Unbekannt", "title": item.get("title", ""), "link": item.get("link", ""), "matched_with": match.get("title", "")
             })
             match["merged_details"].extend(item.get("merged_details", []))
         else:
@@ -351,62 +244,62 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
             feats.append(feat)
     return res
 
-
 # --- Gemini API ---
-def summarize_chunk_with_gemini(client, chunk, max_retries=3):
-    payload = [{"id": i, "original_title": a["title"], "source": a["source"], "raw_text": a["summary"], "has_image": bool(a.get("image"))} for i, a in enumerate(chunk)]
-    prompt = f"Chefredakteur Tech-News:\n1. 'german_title': Übersetze englische Titel vollständig ins Deutsche (Kein Clickbait, keine HTML-Entities).\n2. 'summary': Genau 1 deutscher Satz. Schlüsselwörter mit **fett** markieren.\n3. 'use_image': True nur bei echten Geräten/Screenshots/Charts.\nArtikel:\n{json.dumps(payload, ensure_ascii=False)}"
+class DeltaItem(BaseModel):
+    id: int
+    german_title: str = Field(description="Zwingend auf DEUTSCH übersetzen. Kein Clickbait.")
+    summary: str = Field(description="Genau 1 deutscher Satz mit **fett** hervorgehobenen Begriffen.")
+    use_image: bool = Field(default=False)
 
-    for attempt in range(max_retries):
-        model = "gemini-3.5-flash-lite" if attempt == 0 else "gemini-3.6-flash"
-        try:
-            res = client.models.generate_content(
-                model=model, contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.1, response_mime_type="application/json", response_schema=DeltaBatchResponse)
-            )
-            parsed = DeltaBatchResponse.model_validate_json(res.text)
-            out = []
-            for it in parsed.items:
-                if 0 <= it.id < len(chunk):
-                    orig = chunk[it.id]
-                    clean_title = sanitize_text(it.german_title or orig["title"])
-                    clean_s = re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", sanitize_text(it.summary or "")) or sanitize_text(orig.get("summary", ""))[:180]
-                    out.append({
-                        "title": clean_title,
-                        "link": orig["link"], "source": orig["source"], "other_sources": orig.get("other_sources", []),
-                        "merged_details": orig.get("merged_details", []), "summary": clean_s,
-                        "image": orig["image"] if it.use_image else None, "published": orig["published"], "_ts": orig.get("_ts", 0),
-                    })
-            return out
-        except Exception as err:
-            time.sleep(22 + (attempt * 6) if ("429" in str(err) or "RESOURCE_EXHAUSTED" in str(err)) else 2 ** (attempt + 1))
-
-    return [{"title": sanitize_text(o["title"]), "link": o["link"], "source": o["source"], "other_sources": o.get("other_sources", []),
-             "merged_details": o.get("merged_details", []), "summary": sanitize_text(o["summary"]), "image": o["image"],
-             "published": o["published"], "_ts": o.get("_ts", 0)} for o in chunk]
-
+class DeltaBatchResponse(BaseModel):
+    items: list[DeltaItem]
 
 def summarize_delta_with_gemini(items):
     key = os.environ.get("GEMINI_API_KEY")
-    if not items or not key:
-        return []
+    if not items or not key: return []
     client = genai.Client(api_key=key)
+
+    def _call(chunk):
+        payload = [{"id": i, "original_title": a["title"], "source": a["source"], "raw_text": a["summary"], "has_image": bool(a.get("image"))} for i, a in enumerate(chunk)]
+        prompt = f"Chefredakteur Tech-News:\n1. 'german_title': Auf Deutsch übersetzen (Kein Clickbait, keine Entities).\n2. 'summary': Genau 1 deutscher Satz mit **fett**.\n3. 'use_image': True nur bei echten Hardware-Fotos/Screenshots.\nArtikel:\n{json.dumps(payload, ensure_ascii=False)}"
+        for attempt in range(3):
+            try:
+                res = client.models.generate_content(
+                    model="gemini-3.5-flash-lite" if attempt == 0 else "gemini-3.6-flash", contents=prompt,
+                    config=types.GenerateContentConfig(temperature=0.1, response_mime_type="application/json", response_schema=DeltaBatchResponse)
+                )
+                parsed = DeltaBatchResponse.model_validate_json(res.text)
+                out = []
+                for it in parsed.items:
+                    if 0 <= it.id < len(chunk):
+                        orig = chunk[it.id]
+                        out.append({
+                            "title": clean_text(it.german_title or orig["title"]),
+                            "link": orig["link"], "source": orig["source"], "other_sources": orig.get("other_sources", []),
+                            "merged_details": orig.get("merged_details", []),
+                            "summary": re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", clean_text(it.summary or "")) or clean_text(orig.get("summary", ""))[:180],
+                            "image": orig["image"] if it.use_image else None, "published": orig["published"], "_ts": orig.get("_ts", 0),
+                        })
+                return out
+            except Exception as err:
+                time.sleep(18 + (attempt * 5) if ("429" in str(err) or "RESOURCE_EXHAUSTED" in str(err)) else 2 ** (attempt + 1))
+        return [{"title": clean_text(o["title"]), "link": o["link"], "source": o["source"], "other_sources": o.get("other_sources", []),
+                 "merged_details": o.get("merged_details", []), "summary": clean_text(o["summary"]), "image": o["image"],
+                 "published": o["published"], "_ts": o.get("_ts", 0)} for o in chunk]
+
     chunks = [items[i:i + 35] for i in range(0, len(items), 35)]
     res = []
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        for r in ex.map(lambda c: summarize_chunk_with_gemini(client, c), chunks):
-            res.extend(r)
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        for r in ex.map(_call, chunks): res.extend(r)
     return res
 
-
-# --- Unified Template Engine ---
+# --- Kompaktes Unified Frontend Template ---
 PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="de" data-theme="dark">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>__PAGE_TITLE__</title>
-  <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#121418">
+  <meta name="mobile-web-app-capable" content="yes"><meta name="theme-color" content="#121418">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
@@ -420,20 +313,14 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px}
     .modal-body{overflow-y:auto;flex-grow:1;font-size:.88rem}
     .modal-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:12px}
-    
     .btn, .btn-open-all{
       background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);
       font-size:1.0rem;line-height:1.2;padding:6px 10px;cursor:pointer;flex-shrink:0;
       display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
     }
     .btn.active{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
-    .btn-open-all{
-      background:var(--accent);border-color:var(--accent);color:#fff;font-size:.85rem;
-      font-weight:600;display:none;white-space:nowrap;
-    }
-    .btn-open-all:hover{opacity:.9}
+    .btn-open-all{background:var(--accent);border-color:var(--accent);color:#fff;font-size:.85rem;font-weight:600;display:none;white-space:nowrap}
     .btn-action{width:100%;background:var(--accent);color:#fff;border:none;padding:12px;border-radius:6px;font-weight:600;cursor:pointer;margin-top:14px}
-    
     .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:110}
     .sidebar{width:290px;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;z-index:120;transition:all .25s ease;overflow:hidden;white-space:nowrap}
     .sidebar.collapsed{width:0!important;border:none!important;visibility:hidden}
@@ -446,40 +333,31 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .sidebar-footer{padding:16px;border-top:1px solid var(--border)}
     .nav-link{display:block;text-align:center;color:var(--accent);text-decoration:none;font-size:.82rem;font-weight:600;padding:8px;border-radius:6px;background:var(--accent-dim);margin-bottom:8px}
     .main{flex-grow:1;overflow-y:auto;position:relative}
-    
-    .stream-header{position:sticky;top:0;z-index:50;background:rgba(18,20,24,.55);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;transition:transform .28s ease}
+    .stream-header{position:sticky;top:0;z-index:50;background:rgba(18,20,24,.55);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;transition:transform .28s ease}
     .stream-header.header-hidden{transform:translateY(-100%)}
     [data-theme="light"] .stream-header{background:rgba(248,250,252,.65)}
-    
     .header-left{display:flex;align-items:center;gap:12px;flex-shrink:0;min-width:0}
     .header-title-group{display:flex;flex-direction:column;gap:2px}
     .stream-header h2{font-size:1.15rem;font-weight:700;color:var(--bold);white-space:nowrap}
     .header-meta{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap}
-    
     .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:580px;flex-wrap:nowrap}
-    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 140px;min-width:90px;height:34px;box-sizing:border-box}
-    
-    /* Opt 4: content-visibility für maximale Scroll-Performance */
+    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 140px;min-width:90px;height:34px}
     .cards-grid{padding:14px 16px calc(24px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
     .feed-card{
       background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;
       display:flex;flex-direction:column;justify-content:space-between;
       transition:transform .15s ease, background .15s ease;
-      content-visibility:auto;contain-intrinsic-size:0 150px;
-      touch-action:pan-y;user-select:none;
+      content-visibility:auto;contain-intrinsic-size:0 150px;touch-action:pan-y;
     }
     .feed-card:hover{transform:translateY(-2px);background:var(--hover)}
-    
     .unread-dot-btn{background:none;border:none;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px}
     .unread-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);transition:all .2s}
     .feed-card.seen .unread-dot{background:var(--muted);box-shadow:none;opacity:.55}
     .feed-card.read .unread-dot{background:transparent;box-shadow:none;border:1.5px solid var(--muted);opacity:.35}
     .feed-card.read .feed-title{color:var(--muted)}
-    
-    .action-icon-btn{background:none;border:none;padding:0;cursor:pointer;font-size:.9rem;opacity:.4;transition:all .15s;display:inline-flex;align-items:center;justify-content:center}
+    .action-icon-btn{background:none;border:none;padding:0;cursor:pointer;font-size:.9rem;opacity:.4;transition:all .15s;display:inline-flex;align-items:center}
     .action-icon-btn:hover{opacity:.9;transform:scale(1.15)}
     .feed-card.bookmarked .bookmark-btn{opacity:1;filter:drop-shadow(0 0 4px rgba(234,179,8,.6))}
-    
     .feed-meta{display:flex;align-items:center;gap:6px;font-size:.75rem;margin-bottom:8px;flex-wrap:wrap}
     .feed-source{color:var(--accent);font-weight:600}
     .feed-time,.feed-others{color:var(--muted);font-size:.72rem}
@@ -490,17 +368,14 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .feed-thumb{width:100%;height:150px;object-fit:cover;border-radius:6px;margin-top:auto}
     .meta-clickable{color:var(--accent);cursor:pointer}
     .meta-clickable:hover{text-decoration:underline}
-
     .toast-container{position:fixed;bottom:20px;right:20px;z-index:1000;display:none;max-width:380px;background:var(--sidebar);border:1px solid var(--border);border-radius:10px;padding:12px 16px;box-shadow:0 8px 24px rgba(0,0,0,.45);font-size:.85rem;color:var(--text);align-items:center;gap:12px;animation:slideUp .25s ease}
     @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
     @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
     .spin{display:inline-block;animation:spin 1.2s linear infinite}
-    
     .toast-link{color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
     .toast-link:hover{text-decoration:underline;color:var(--link)}
     .toast-container a{color:var(--link);text-decoration:none;font-weight:600}
     .toast-close{background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;padding:0 4px}
-
     @media (max-width:768px){
       .sidebar{position:fixed;inset:0 auto 0 0;transform:translateX(-100%);box-shadow:4px 0 24px rgba(0,0,0,.6)}
       .sidebar.open{transform:translateX(0);visibility:visible!important;width:290px!important}
@@ -509,12 +384,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       .header-left{width:100%}
       .stream-header h2{font-size:1rem;white-space:normal}
       .header-meta{font-size:.75rem;flex-wrap:wrap}
-      
       .header-right{width:100%;max-width:100%;display:flex;gap:6px;flex-wrap:nowrap;justify-content:space-between}
       .search-input{flex:1 1 auto;min-width:80px;max-width:none}
       .btn, .btn-open-all{padding:6px 8px;font-size:.92rem;height:34px}
       .btn-open-all{font-size:.75rem}
-      
       .cards-grid{grid-template-columns:1fr;gap:8px;padding:8px 8px calc(24px + env(safe-area-inset-bottom,0px))}
       .feed-card{padding:14px}
       .toast-container{left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));max-width:none}
@@ -530,7 +403,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       <div id="auth-err" style="color:#ef4444;font-size:.8rem;margin-top:8px;display:none">Ungültiges Passwort!</div>
     </div>
   </div>
-
   <div id="health-modal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header"><h2>📡 Feed-Status</h2><button class="btn" onclick="toggleModal('health-modal',false)">&times;</button></div>
@@ -543,7 +415,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       <button class="btn-action" onclick="toggleModal('health-modal',false)">Schließen</button>
     </div>
   </div>
-
   <div id="dup-modal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header"><h2>🧹 Bereinigte Duplikate</h2><button class="btn" onclick="toggleModal('dup-modal',false)">&times;</button></div>
@@ -551,12 +422,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       <button class="btn-action" onclick="toggleModal('dup-modal',false)">Schließen</button>
     </div>
   </div>
-
-  <div id="toast" class="toast-container">
-    <span id="toast-msg" style="flex:1"></span>
-    <button class="toast-close" onclick="hideToast()">&times;</button>
-  </div>
-
+  <div id="toast" class="toast-container"><span id="toast-msg" style="flex:1"></span><button class="toast-close" onclick="hideToast()">&times;</button></div>
   <div class="sidebar-backdrop" id="backdrop" onclick="toggleSidebar()"></div>
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header"><h1>⚡ __SIDEBAR_TITLE__</h1><button class="btn" onclick="toggleSidebar()">&times;</button></div>
@@ -566,7 +432,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       __MARK_ALL_BTN__
     </div>
   </aside>
-
   <main class="main">
     <div class="stream-header">
       <div class="header-left">
@@ -590,33 +455,17 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     </div>
     <div id="articles-container" class="cards-grid"></div>
   </main>
-
   <script>
     window.IS_ARCHIVE = __IS_ARCHIVE__;
     const configuredSources = __CONFIGURED_SOURCES__, feedHealth = __HEALTH_DATA__, buildTime = "__NOW_STR__";
     let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, sIndex = -1, sTimer = null, toastTimer = null, pollInterval = null;
 
-    // Service Worker registrieren (PWA / Offline)
-    if('serviceWorker' in navigator){
-      window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(()=>{}); });
-    }
+    if('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 
-    const docElem = document.createElement('textarea');
-    function cleanTitle(s) {
-      if (!s) return '';
-      docElem.innerHTML = s;
-      let val = docElem.value;
-      if (val.includes('&')) { docElem.innerHTML = val; val = docElem.value; }
-      return val.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0*39;/g, "'").replace(/&apos;/g, "'");
-    }
-
-    const esc = s => cleanTitle(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const hStr = s => { let h = 0; for(let i=0;i<(s||'').length;i++){ h = ((h<<5)-h)+s.charCodeAt(i); h |= 0; } return Math.abs(h); };
-    
     const relTime = d => {
       if(!d) return ''; const diff = Math.floor((Date.now() - new Date(d))/1000);
-      if(isNaN(diff)) return ''; if(diff < 60) return 'gerade'; if(diff < 3600) return `vor ${Math.floor(diff/60)}m`;
-      if(diff < 86400) return `vor ${Math.floor(diff/3600)}h`; return `vor ${Math.floor(diff/86400)}d`;
+      return isNaN(diff)?'':diff<60?'gerade':diff<3600?`vor ${Math.floor(diff/60)}m`:diff<86400?`vor ${Math.floor(diff/3600)}h`:`vor ${Math.floor(diff/86400)}d`;
     };
 
     function initTheme(){ document.documentElement.setAttribute('data-theme', localStorage.getItem('hub_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')); }
@@ -635,25 +484,15 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const t = document.getElementById('toast');
       document.getElementById('toast-msg').innerHTML = htmlMsg;
       t.style.display = 'flex';
-      if(autoHideMs > 0){
-        toastTimer = setTimeout(() => { t.style.display = 'none'; }, autoHideMs);
-      }
+      if(autoHideMs > 0) toastTimer = setTimeout(() => { t.style.display = 'none'; }, autoHideMs);
     }
     function hideToast(){ clearTimeout(toastTimer); document.getElementById('toast').style.display = 'none'; }
 
-    // Opt 3: Native Share API mit Clipboard-Fallback
     async function shareArticle(title, url){
-      if(navigator.share){
-        try {
-          await navigator.share({ title: cleanTitle(title), url: url });
-        } catch(e){}
-      } else {
-        try {
-          await navigator.clipboard.writeText(url);
-          showToast('📋 Link in die Zwischenablage kopiert!', 2500);
-        } catch(e){
-          showToast('Kopieren fehlgeschlagen.', 2500);
-        }
+      if(navigator.share){ try { await navigator.share({ title: title, url: url }); } catch(e){} }
+      else {
+        try { await navigator.clipboard.writeText(url); showToast('📋 Link in die Zwischenablage kopiert!', 2500); }
+        catch(e){ showToast('Kopieren fehlgeschlagen.', 2500); }
       }
     }
 
@@ -662,23 +501,14 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const el = document.getElementById('saved-count');
       if(el) el.textContent = b.length;
       const openBtn = document.getElementById('open-all-btn');
-      if(openBtn) {
-        openBtn.style.display = (onlySaved && b.length > 0) ? 'inline-flex' : 'none';
-      }
+      if(openBtn) openBtn.style.display = (onlySaved && b.length > 0) ? 'inline-flex' : 'none';
     }
 
     function toggleBookmark(id){
-      let b = getStorage('bookmarked_news');
-      const idx = b.indexOf(id);
+      let b = getStorage('bookmarked_news'); const idx = b.indexOf(id);
       const el = document.querySelector(`.feed-card[data-id="${id}"]`);
-      if(idx >= 0){
-        b.splice(idx, 1);
-        if(el) el.classList.remove('bookmarked');
-      } else {
-        b.push(id);
-        if(el) el.classList.add('bookmarked');
-        if(navigator.vibrate) navigator.vibrate(20);
-      }
+      if(idx >= 0){ b.splice(idx, 1); if(el) el.classList.remove('bookmarked'); }
+      else { b.push(id); if(el) el.classList.add('bookmarked'); if(navigator.vibrate) navigator.vibrate(20); }
       setStorage('bookmarked_news', b);
       updateBookmarkCount();
       if(onlySaved) applyFilters();
@@ -688,41 +518,22 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       onlySaved = !onlySaved;
       const btn = document.getElementById('saved-filter-btn');
       if(btn) btn.classList.toggle('active', onlySaved);
-      updateBookmarkCount();
-      applyFilters();
+      updateBookmarkCount(); applyFilters();
       const t = document.getElementById('current-title');
-      if(t && onlySaved) {
-        t.textContent = `🔖 ${getStorage('bookmarked_news').length} Gemerkte News`;
-      } else if(t) {
-        t.textContent = window.IS_ARCHIVE ? `Archiv: ${liveArticles.length} News bis ${buildTime}` : `${liveArticles.length} News bis ${buildTime}`;
-      }
+      if(t) t.textContent = onlySaved ? `🔖 ${getStorage('bookmarked_news').length} Gemerkte News` : (window.IS_ARCHIVE ? `Archiv: ${liveArticles.length} News bis ${buildTime}` : `${liveArticles.length} News bis ${buildTime}`);
     }
 
     function openAllBookmarked(){
       const bList = getStorage('bookmarked_news');
       if(!bList.length) return;
-      
       const toOpen = liveArticles.filter(a => bList.includes(String(hStr(a.link||''))));
       if(!toOpen.length) return;
-
-      toOpen.forEach(a => { window.open(a.link, '_blank'); });
-
+      toOpen.forEach(a => window.open(a.link, '_blank'));
       const r = getStorage('read_news');
-      toOpen.forEach(a => {
-        const id = String(hStr(a.link||''));
-        if(!r.includes(id)) r.push(id);
-      });
-      setStorage('read_news', r);
-      setStorage('bookmarked_news', []);
-      
-      document.querySelectorAll('.feed-card.bookmarked').forEach(c => {
-        c.classList.remove('bookmarked');
-        c.classList.add('read');
-      });
-      
-      updateBookmarkCount();
-      showToast(`🚀 ${toOpen.length} Artikel geöffnet und als gelesen markiert.`, 4000);
-      toggleSavedFilter();
+      toOpen.forEach(a => { const id = String(hStr(a.link||'')); if(!r.includes(id)) r.push(id); });
+      setStorage('read_news', r); setStorage('bookmarked_news', []);
+      document.querySelectorAll('.feed-card.bookmarked').forEach(c => { c.classList.remove('bookmarked'); c.classList.add('read'); });
+      updateBookmarkCount(); showToast(`🚀 ${toOpen.length} Artikel geöffnet und als gelesen markiert.`, 4000); toggleSavedFilter();
     }
 
     function toggleRead(id){
@@ -731,42 +542,25 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if(idx>=0){ r.splice(idx,1); if(el) el.classList.remove('read'); } else { r.push(id); if(el) el.classList.add('read'); }
       setStorage('read_news', r);
     }
+
     function markAllRead(){
       const r = getStorage('read_news');
       document.querySelectorAll('.feed-card').forEach(c => { c.classList.add('read'); if(!r.includes(c.dataset.id)) r.push(c.dataset.id); });
       setStorage('read_news', r);
     }
 
-    // Opt 5: Touch-Swipe Listener (Rechts = Teilen, Links = Lesezeichen)
     function attachSwipeHandler(card, title, link, id){
-      let touchStartX = 0, touchStartY = 0, touchDiffX = 0;
-      card.addEventListener('touchstart', e => {
-        touchStartX = e.changedTouches[0].screenX;
-        touchStartY = e.changedTouches[0].screenY;
-        touchDiffX = 0;
-      }, {passive:true});
-
+      let touchStartX = 0, touchStartY = 0;
+      card.addEventListener('touchstart', e => { touchStartX = e.changedTouches[0].screenX; touchStartY = e.changedTouches[0].screenY; }, {passive:true});
       card.addEventListener('touchmove', e => {
-        const diffX = e.changedTouches[0].screenX - touchStartX;
-        const diffY = e.changedTouches[0].screenY - touchStartY;
-        if(Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 100){
-          card.style.transform = `translateX(${diffX * 0.4}px)`;
-          touchDiffX = diffX;
-        }
+        const diffX = e.changedTouches[0].screenX - touchStartX, diffY = e.changedTouches[0].screenY - touchStartY;
+        if(Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 100) card.style.transform = `translateX(${diffX * 0.4}px)`;
       }, {passive:true});
-
       card.addEventListener('touchend', e => {
         card.style.transform = '';
-        const diffX = e.changedTouches[0].screenX - touchStartX;
-        const diffY = e.changedTouches[0].screenY - touchStartY;
+        const diffX = e.changedTouches[0].screenX - touchStartX, diffY = e.changedTouches[0].screenY - touchStartY;
         if(Math.abs(diffX) > 65 && Math.abs(diffX) > Math.abs(diffY) * 1.5){
-          if(diffX > 0){
-            // Nach rechts: Teilen
-            shareArticle(title, link);
-          } else {
-            // Nach links: Lesezeichen toggle
-            toggleBookmark(id);
-          }
+          if(diffX > 0) shareArticle(title, link); else toggleBookmark(id);
         }
       }, {passive:true});
     }
@@ -782,7 +576,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const sl = document.getElementById('source-list');
       if(sl) {
         sl.innerHTML = `<li><button class="source-btn active" onclick="filterSource('all',this)"><span>Alle</span><span class="badge">${articles.length}</span></button></li>` +
-          sorted.map(s => `<li><button class="source-btn" onclick="filterSource('${esc(s)}',this)"><span>${esc(s)}</span><span class="badge">${counts[s]||0}</span></button></li>`).join('');
+          sorted.map(s => `<li><button class="source-btn" onclick="filterSource('${s}',this)"><span>${s}</span><span class="badge">${counts[s]||0}</span></button></li>`).join('');
       }
 
       const rList = getStorage('read_news'), sList = getStorage('seen_news'), bList = getStorage('bookmarked_news');
@@ -791,33 +585,27 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const cont = document.getElementById('articles-container');
       if(cont) {
         cont.innerHTML = articles.map(a => {
-          const id = hStr(a.link||''), oth = (a.other_sources&&a.other_sources.length)?`<span class="feed-others">• Auch bei: ${esc(a.other_sources.join(", "))}</span>`:'';
+          const id = hStr(a.link||''), oth = (a.other_sources&&a.other_sources.length)?`<span class="feed-others">• Auch bei: ${a.other_sources.join(", ")}</span>`:'';
           const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" onerror="this.remove()">` : '';
-          let cls = '';
-          if(rList.includes(String(id))) cls += ' read';
-          if(sList.includes(String(id))) cls += ' seen';
-          if(bList.includes(String(id))) cls += ' bookmarked';
+          let cls = (rList.includes(String(id))?' read':'') + (sList.includes(String(id))?' seen':'') + (bList.includes(String(id))?' bookmarked':'');
 
-          return `<article class="feed-card${cls}" data-id="${id}" data-link="${esc(a.link||'')}" data-title="${esc(a.title||'')}" data-sources="${esc([a.source||'',...(a.other_sources||[])].join(';;;'))}">
+          return `<article class="feed-card${cls}" data-id="${id}" data-link="${a.link||''}" data-title="${a.title||''}" data-sources="${[a.source||'',...(a.other_sources||[])].join(';;;')}">
             <div class="feed-content">
               <div class="feed-meta">
                 <button class="action-icon-btn bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Für später merken">🔖</button>
-                <button class="action-icon-btn" onclick="event.stopPropagation();shareArticle('${esc(a.title||'')}', '${esc(a.link||'')}')" title="Artikel teilen">📤</button>
-                <span class="feed-source">${esc(a.source||'Quelle')}</span>
-                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Als gelesen / ungelesen"><span class="unread-dot"></span></button>
+                <button class="action-icon-btn" onclick="event.stopPropagation();shareArticle('${a.title||''}', '${a.link||''}')" title="Artikel teilen">📤</button>
+                <span class="feed-source">${a.source||'Quelle'}</span>
+                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Gelesen / Ungelesen"><span class="unread-dot"></span></button>
                 <span class="feed-time">${relTime(a.published)}</span>
                 ${oth}
               </div>
-              <a class="feed-title" href="${esc(a.link||'#')}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${cleanTitle(a.title||'Ohne Titel')}</a>
-              <p class="feed-summary">${cleanTitle(a.summary||'')}</p>
+              <a class="feed-title" href="${a.link||'#'}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${a.title||'Ohne Titel'}</a>
+              <p class="feed-summary">${a.summary||''}</p>
             </div>${img}
           </article>`;
         }).join('');
 
-        // Swipe Gesten an Karten binden
-        cont.querySelectorAll('.feed-card').forEach(c => {
-          attachSwipeHandler(c, c.dataset.title, c.dataset.link, c.dataset.id);
-        });
+        cont.querySelectorAll('.feed-card').forEach(c => attachSwipeHandler(c, c.dataset.title, c.dataset.link, c.dataset.id));
       }
     }
 
@@ -826,17 +614,17 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const m = {}; let tot = 0;
       liveArticles.forEach(a => {
         (a.merged_details||[]).forEach(d => { const s = d.source||"Unbekannt"; (m[s]=m[s]||[]).push(d); tot++; });
-        (a.other_sources||[]).forEach(src => { if(!m[src]){ m[src]=[{source:src,title:"Altbestand ohne Einzeltitel",link:a.link,matched_with:a.title,is_legacy:true}]; tot++; } });
+        (a.other_sources||[]).forEach(src => { if(!m[src]){ m[src]=[{source:src,title:"Altbestand",link:a.link,matched_with:a.title,is_legacy:true}]; tot++; } });
       });
       const entries = Object.entries(m).sort((a,b)=>b[1].length-a[1].length);
       el.innerHTML = !entries.length ? '<p style="color:var(--muted);padding:10px 0">Keine Duplikate gefunden.</p>' :
         `<div style="margin-bottom:10px;font-weight:600;color:var(--accent)">Gesamt: ${tot} bereinigte Berichte</div>` +
         entries.map(([src, items], i) => `<div style="border-bottom:1px solid var(--border);padding:6px 0">
           <div class="modal-row" style="border:none;cursor:pointer" onclick="const e=document.getElementById('dd-${i}');e.style.display=e.style.display==='none'?'block':'none'">
-            <strong>${esc(src)}</strong><span class="badge">${items.length} ▾</span>
+            <strong>${src}</strong><span class="badge">${items.length} ▾</span>
           </div>
           <div id="dd-${i}" style="display:none;padding-left:8px;border-left:2px solid var(--accent);margin-top:4px">
-            ${items.map(it=>`<div style="margin-bottom:6px">${it.is_legacy?cleanTitle(it.title):`<a href="${esc(it.link)}" target="_blank" rel="noopener" style="color:var(--link);text-decoration:none">🔗 ${cleanTitle(it.title)}</a>`}<div style="color:var(--muted);font-size:.72rem">↳ Mit: "${cleanTitle(it.matched_with)}"</div></div>`).join('')}
+            ${items.map(it=>`<div style="margin-bottom:6px">${it.is_legacy?it.title:`<a href="${it.link}" target="_blank" rel="noopener" style="color:var(--link);text-decoration:none">🔗 ${it.title}</a>`}<div style="color:var(--muted);font-size:.72rem">↳ Mit: "${it.matched_with}"</div></div>`).join('')}
           </div>
         </div>`).join('');
       toggleModal('dup-modal', true);
@@ -854,10 +642,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const bList = getStorage('bookmarked_news');
       document.querySelectorAll('.feed-card').forEach(c => {
         const id = c.dataset.id;
-        const mSaved = !onlySaved || bList.includes(id);
-        const mSrc = activeSource==='all' || (c.dataset.sources||'').split(';;;').includes(activeSource);
-        const mQ = !searchQuery || c.textContent.toLowerCase().includes(searchQuery);
-        c.style.display = (mSaved && mSrc && mQ) ? '' : 'none';
+        c.style.display = ((!onlySaved || bList.includes(id)) && (activeSource==='all' || (c.dataset.sources||'').split(';;;').includes(activeSource)) && (!searchQuery || c.textContent.toLowerCase().includes(searchQuery))) ? '' : 'none';
       });
     }
 
@@ -866,80 +651,57 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if(!tk){
         showToast(`
           <div style="display:flex;flex-direction:column;gap:6px">
-            <span>GitHub PAT eingeben:</span>
+            <span>GitHub PAT:</span>
             <div style="display:flex;gap:6px">
               <input type="password" id="toast-token-inp" class="search-input" style="padding:4px 8px;font-size:.8rem;height:28px" placeholder="ghp_...">
               <button class="btn" style="font-size:.8rem;padding:4px 8px;height:28px" onclick="saveToastToken()">OK</button>
             </div>
           </div>
         `, 0);
-      } else {
-        dispatchWorkflow(tk);
-      }
+      } else { dispatchWorkflow(tk); }
     }
 
     function saveToastToken(){
       const el = document.getElementById('toast-token-inp');
-      if(el && el.value.trim()){
-        const val = el.value.trim();
-        localStorage.setItem('gh_token', val);
-        dispatchWorkflow(val);
-      }
+      if(el && el.value.trim()){ const val = el.value.trim(); localStorage.setItem('gh_token', val); dispatchWorkflow(val); }
     }
 
     async function dispatchWorkflow(tk){
-      showToast('<a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" class="toast-link"><span class="spin">🔄</span> Starte Build im Hintergrund... ↗</a>', 0);
+      showToast('<a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" class="toast-link"><span class="spin">🔄</span> Starte Build... ↗</a>', 0);
       const startTime = new Date(Date.now() - 30000).toISOString();
       try {
         const r = await fetch('https://api.github.com/repos/schoerb/news-hub/actions/workflows/deploy.yml/dispatches', {
-          method:'POST',
-          headers:{'Accept':'application/vnd.github+json','Authorization':'Bearer ' + tk},
-          body:JSON.stringify({ref:'main'})
+          method:'POST', headers:{'Accept':'application/vnd.github+json','Authorization':'Bearer ' + tk}, body:JSON.stringify({ref:'main'})
         });
         if(r.status === 204){
           showToast('<a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" class="toast-link"><span class="spin">⏳</span> GitHub Action läuft... ↗</a>', 0);
           startWorkflowPolling(tk, startTime);
         } else {
-          showToast(`⚠️ Start fehlgeschlagen (HTTP ${r.status}). <a href="#" onclick="localStorage.removeItem('gh_token');triggerWorkflow();return false;">Token ändern</a>`, 8000);
+          showToast(`⚠️ Fehler (${r.status}). <a href="#" onclick="localStorage.removeItem('gh_token');triggerWorkflow();return false;">Token neu eingeben</a>`, 8000);
         }
-      } catch(e){
-        showToast('❌ Netzwerkfehler: ' + esc(e.message), 6000);
-      }
+      } catch(e){ showToast('❌ Netzwerkfehler: ' + e.message, 6000); }
     }
 
     function startWorkflowPolling(tk, startTime){
       clearInterval(pollInterval);
       let attempts = 0;
-      const maxAttempts = 50;
-
       pollInterval = setInterval(async () => {
-        attempts++;
-        if(attempts > maxAttempts){
-          clearInterval(pollInterval);
-          showToast('⚠️ Zeitüberschreitung beim Warten auf die Action. <a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener">Actions prüfen ↗</a>', 8000);
-          return;
-        }
-
+        if(++attempts > 50){ clearInterval(pollInterval); showToast('⚠️ Timeout. <a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener">Actions prüfen ↗</a>', 8000); return; }
         try {
           const r = await fetch('https://api.github.com/repos/schoerb/news-hub/actions/runs?event=workflow_dispatch&per_page=1', {
             headers:{'Accept':'application/vnd.github+json','Authorization':'Bearer ' + tk}
           });
           if(!r.ok) return;
-          const data = await r.json();
-          const run = data.workflow_runs && data.workflow_runs[0];
-          const runUrl = (run && run.html_url) ? run.html_url : 'https://github.com/schoerb/news-hub/actions';
-          
+          const data = await r.json(), run = data.workflow_runs && data.workflow_runs[0];
+          const runUrl = (run && run.html_url) || 'https://github.com/schoerb/news-hub/actions';
           if(run && new Date(run.created_at) >= new Date(startTime)){
-            if(run.status === 'in_progress' || run.status === 'queued'){
-              showToast(`<a href="${runUrl}" target="_blank" rel="noopener" class="toast-link"><span class="spin">⏳</span> Build läuft... (${attempts * 5}s) ↗</a>`, 0);
-            } else if(run.status === 'completed'){
+            if(run.status === 'in_progress' || run.status === 'queued') showToast(`<a href="${runUrl}" target="_blank" rel="noopener" class="toast-link"><span class="spin">⏳</span> Build läuft... (${attempts * 5}s) ↗</a>`, 0);
+            else if(run.status === 'completed'){
               clearInterval(pollInterval);
               if(run.conclusion === 'success'){
-                showToast(`<a href="${runUrl}" target="_blank" rel="noopener" class="toast-link">🎉 Update abgeschlossen! Lade Feeds neu... ↗</a>`, 0);
+                showToast(`<a href="${runUrl}" target="_blank" rel="noopener" class="toast-link">🎉 Update fertig! Aktualisiere... ↗</a>`, 0);
                 setTimeout(() => reloadDataSilent(), 2500);
-              } else {
-                showToast(`❌ Build fehlgeschlagen (${run.conclusion}). <a href="${runUrl}" target="_blank" rel="noopener">Log ansehen ↗</a>`, 9000);
-              }
+              } else { showToast(`❌ Fehlgeschlagen (${run.conclusion}). <a href="${runUrl}" target="_blank" rel="noopener">Log ↗</a>`, 9000); }
             }
           }
         } catch(e) {}
@@ -952,16 +714,9 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         if(!r.ok) throw new Error();
         rawData = await r.text();
         const parsed = parsePayload(localStorage.getItem('hub_key')||"");
-        if(parsed) {
-          globalArticles = parsed;
-          onLoaded();
-          showToast('✅ Feeds erfolgreich aktualisiert!', 5000);
-        } else {
-          location.reload();
-        }
-      } catch(e){
-        location.reload();
-      }
+        if(parsed) { globalArticles = parsed; onLoaded(); showToast('✅ Feeds aktualisiert!', 4000); }
+        else { location.reload(); }
+      } catch(e){ location.reload(); }
     }
 
     function parsePayload(pw){
@@ -970,8 +725,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         if(rawData.trim().startsWith('[')) return JSON.parse(rawData);
         if(!pw) return null;
         const dec = CryptoJS.AES.decrypt(rawData, pw).toString(CryptoJS.enc.Utf8);
-        if(!dec || !dec.startsWith('[')) return null;
-        return JSON.parse(dec);
+        return (dec && dec.startsWith('[')) ? JSON.parse(dec) : null;
       } catch(e){ return null; }
     }
 
@@ -984,47 +738,28 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         rawData = await r.text();
       } catch(e){ document.getElementById('current-title').textContent = "Fehler beim Laden von data.json"; return; }
 
-      let parsed = parsePayload('');
-      if(!parsed) {
-        const savedPw = localStorage.getItem('hub_key');
-        if(savedPw) parsed = parsePayload(savedPw);
-      }
-
-      if(parsed) {
-        globalArticles = parsed;
-        onLoaded();
-      } else {
-        document.getElementById('auth-overlay').style.display = 'flex';
-        document.getElementById('auth-pwd').focus();
-      }
+      let parsed = parsePayload('') || (localStorage.getItem('hub_key') ? parsePayload(localStorage.getItem('hub_key')) : null);
+      if(parsed) { globalArticles = parsed; onLoaded(); }
+      else { document.getElementById('auth-overlay').style.display = 'flex'; document.getElementById('auth-pwd').focus(); }
     }
 
     function submitAuth(){
-      const pw = document.getElementById('auth-pwd').value;
-      const parsed = parsePayload(pw);
-      if(parsed) {
-        localStorage.setItem('hub_key', pw);
-        globalArticles = parsed;
-        onLoaded();
-      } else {
-        document.getElementById('auth-err').style.display = 'block';
-      }
+      const pw = document.getElementById('auth-pwd').value, parsed = parsePayload(pw);
+      if(parsed) { localStorage.setItem('hub_key', pw); globalArticles = parsed; onLoaded(); }
+      else { document.getElementById('auth-err').style.display = 'block'; }
     }
 
     function onLoaded(){
       try {
         document.getElementById('auth-overlay').style.display = 'none';
         const valid = new Set(globalArticles.map(a => String(hStr(a.link||''))));
-        setStorage('read_news', getStorage('read_news').filter(id => valid.has(id)));
-        setStorage('seen_news', getStorage('seen_news').filter(id => valid.has(id)));
-        setStorage('bookmarked_news', getStorage('bookmarked_news').filter(id => valid.has(id)));
+        ['read_news', 'seen_news', 'bookmarked_news'].forEach(k => setStorage(k, getStorage(k).filter(id => valid.has(id))));
 
         const now = Date.now(), c24 = new Date(now - 86400000), c48 = new Date(now - 172800000);
         liveArticles = globalArticles.filter(a => {
           if (!a.published) return !window.IS_ARCHIVE;
           const p = new Date(a.published);
-          if (isNaN(p.getTime())) return !window.IS_ARCHIVE;
-          return window.IS_ARCHIVE ? (p < c24 && p >= c48) : (p >= c24);
+          return isNaN(p.getTime()) ? !window.IS_ARCHIVE : (window.IS_ARCHIVE ? (p < c24 && p >= c48) : (p >= c24));
         });
         if(!window.IS_ARCHIVE && !liveArticles.length && globalArticles.length) liveArticles = globalArticles;
 
@@ -1047,8 +782,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         mEl.addEventListener('scroll', () => {
           const y = mEl.scrollTop;
           if(Math.abs(lastY-y) > 6 && document.activeElement !== document.getElementById('search-box')) {
-            hEl.classList.toggle('header-hidden', y > lastY && y > 50);
-            lastY = y;
+            hEl.classList.toggle('header-hidden', y > lastY && y > 50); lastY = y;
           }
         }, {passive:true});
 
@@ -1056,13 +790,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         if(hl) {
           hl.innerHTML = feedHealth.map(f => {
             const ok = f.status==='ok'||f.code===304||f.code===200;
-            return `<div class="modal-row"><span>${ok?'🟢':'🔴'} ${esc(f.title)}</span><span style="color:${ok?'var(--muted)':'#ef4444'};font-family:monospace">${f.code||f.status}</span></div>`;
+            return `<div class="modal-row"><span>${ok?'🟢':'🔴'} ${f.title}</span><span style="color:${ok?'var(--muted)':'#ef4444'};font-family:monospace">${f.code||f.status}</span></div>`;
           }).join('');
         }
-      } catch(err) {
-        console.error(err);
-        document.getElementById('current-title').textContent = "Fehler: " + err.message;
-      }
+      } catch(err) { console.error(err); }
     }
 
     document.addEventListener('visibilitychange', () => {
@@ -1070,13 +801,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         document.querySelectorAll('.feed-card').forEach(c => {
           const art = liveArticles.find(a => String(hStr(a.link||'')) === c.dataset.id);
           if(art && art.published) c.querySelector('.feed-time').textContent = relTime(art.published);
-        });
-        fetch('data.json?t=' + Date.now(), {cache:'no-store'}).then(r => r.text()).then(t => { 
-          if(t && t !== rawData){ 
-            rawData = t; 
-            const parsed = parsePayload(localStorage.getItem('hub_key')||"");
-            if(parsed) { globalArticles = parsed; onLoaded(); }
-          } 
         });
       }
     });
@@ -1101,63 +825,24 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-# --- Service Worker Script (Offline-Caching) ---
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v1';
-const ASSETS = [
-  './',
-  './index.html',
-  './archive.html',
-  './manifest.json',
-  'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
-  'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'
-];
-
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS)));
-  self.skipWaiting();
-});
-
-self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))));
-  self.clients.claim();
-});
-
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v2';
+const ASSETS = ['./', './index.html', './archive.html', './manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
+self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
+self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
 self.addEventListener('fetch', e => {
-  // data.json: Network-First mit Cache-Fallback (Offline-Support)
   if(e.request.url.includes('data.json')){
-    e.respondWith(
-      fetch(e.request).then(res => {
-        const cl = res.clone();
-        caches.open(CACHE_NAME).then(c => c.put(e.request, cl));
-        return res;
-      }).catch(() => caches.match(e.request))
-    );
+    e.respondWith(fetch(e.request).then(res => { const cl = res.clone(); caches.open(CACHE_NAME).then(c => c.put(e.request, cl)); return res; }).catch(() => caches.match(e.request)));
     return;
   }
-  // Statische Assets: Stale-While-Revalidate
-  e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request))
-  );
+  e.respondWith(caches.match(e.request).then(cached => cached || fetch(e.request)));
 });
 """
 
-# --- Web App Manifest ---
 APP_MANIFEST = {
-    "name": "News-Hub",
-    "short_name": "NewsHub",
-    "start_url": "./index.html",
-    "display": "standalone",
-    "background_color": "#121418",
-    "theme_color": "#121418",
-    "icons": [
-        {
-            "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>",
-            "sizes": "192x192 512x512",
-            "type": "image/svg+xml"
-        }
-    ]
+    "name": "News-Hub", "short_name": "NewsHub", "start_url": "./index.html", "display": "standalone",
+    "background_color": "#121418", "theme_color": "#121418",
+    "icons": [{"src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>", "sizes": "192x192 512x512", "type": "image/svg+xml"}]
 }
-
 
 def render_page(feed_health, feeds, is_archive=False):
     now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y %H:%M")
@@ -1177,7 +862,6 @@ def render_page(feed_health, feeds, is_archive=False):
                          .replace("__CONFIGURED_SOURCES__", json.dumps([f["title"] for f in feeds], ensure_ascii=False)) \
                          .replace("__IS_ARCHIVE__", "true" if is_archive else "false")
 
-
 if __name__ == "__main__":
     os.makedirs("public", exist_ok=True)
     pw = os.environ.get("PAGE_PASSWORD", "")
@@ -1189,23 +873,17 @@ if __name__ == "__main__":
 
     raw_items, new_meta, feed_health = fetch_all_feeds(feeds, meta)
 
-    # Opt 1: Dauerhafte Speicherung der HTTP-Metadaten
-    with open("cache_meta.json", "w", encoding="utf-8") as f:
-        json.dump(new_meta, f, separators=(',', ':'))
-    with open("public/cache_meta.json", "w", encoding="utf-8") as f:
-        json.dump(new_meta, f, separators=(',', ':'))
+    for p in ("cache_meta.json", "public/cache_meta.json"):
+        with open(p, "w", encoding="utf-8") as f: json.dump(new_meta, f, separators=(',', ':'))
 
     new_items = []
     for r in raw_items:
-        if any(r["link"] == c["link"] for c in cached):
-            continue
+        if any(r["link"] == c["link"] for c in cached): continue
         m = next((c for c in cached if is_dup(r["title"], c["title"], extract_features(r["title"]), extract_features(c["title"]))), None)
         if m:
-            if r["source"] != m["source"] and r["source"] not in m.setdefault("other_sources", []):
-                m["other_sources"].append(r["source"])
+            if r["source"] != m["source"] and r["source"] not in m.setdefault("other_sources", []): m["other_sources"].append(r["source"])
             m.setdefault("merged_details", []).append({"source": r["source"], "title": r["title"], "link": r["link"], "matched_with": m["title"]})
-        else:
-            new_items.append(r)
+        else: new_items.append(r)
 
     print(f"📦 Neue Unikate: {len(new_items)} (Cache: {len(cached)})")
     bundled = consolidate_articles(new_items)
@@ -1224,17 +902,8 @@ if __name__ == "__main__":
             gh.write(f"deploy={'true' if bool(bundled) or len(cached) != len(final) else 'false'}\n")
 
     json_payload = json.dumps(frontend_data, ensure_ascii=False, separators=(',', ':'))
-    with open("public/data.json", "w", encoding="utf-8") as f:
-        f.write(encrypt_payload(json_payload, pw) if pw else json_payload)
-
-    # Opt 2: Service Worker & Web App Manifest generieren
-    with open("public/sw.js", "w", encoding="utf-8") as f:
-        f.write(SW_SCRIPT)
-    with open("public/manifest.json", "w", encoding="utf-8") as f:
-        json.dump(APP_MANIFEST, f, indent=2)
-
-    with open("public/index.html", "w", encoding="utf-8") as f:
-        f.write(render_page(feed_health, feeds, is_archive=False))
-
-    with open("public/archive.html", "w", encoding="utf-8") as f:
-        f.write(render_page(feed_health, feeds, is_archive=True))
+    with open("public/data.json", "w", encoding="utf-8") as f: f.write(encrypt_payload(json_payload, pw) if pw else json_payload)
+    with open("public/sw.js", "w", encoding="utf-8") as f: f.write(SW_SCRIPT)
+    with open("public/manifest.json", "w", encoding="utf-8") as f: json.dump(APP_MANIFEST, f)
+    with open("public/index.html", "w", encoding="utf-8") as f: f.write(render_page(feed_health, feeds, is_archive=False))
+    with open("public/archive.html", "w", encoding="utf-8") as f: f.write(render_page(feed_health, feeds, is_archive=True))
