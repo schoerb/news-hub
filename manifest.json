@@ -1,15 +1,1 @@
-{
-  "name": "News-Hub",
-  "short_name": "NewsHub",
-  "start_url": "./index.html",
-  "display": "standalone",
-  "background_color": "#121418",
-  "theme_color": "#121418",
-  "icons": [
-    {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>\u26a1</text></svg>",
-      "sizes": "192x192 512x512",
-      "type": "image/svg+xml"
-    }
-  ]
-}
+{"name": "News-Hub", "short_name": "NewsHub", "start_url": "./index.html", "display": "standalone", "background_color": "#121418", "theme_color": "#121418", "icons": [{"src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>\u26a1</text></svg>", "sizes": "192x192 512x512", "type": "image/svg+xml"}]}

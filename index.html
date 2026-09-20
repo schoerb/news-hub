@@ -3,8 +3,7 @@
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>News-Hub</title>
-  <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#121418">
+  <meta name="mobile-web-app-capable" content="yes"><meta name="theme-color" content="#121418">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
@@ -18,20 +17,14 @@
     .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px}
     .modal-body{overflow-y:auto;flex-grow:1;font-size:.88rem}
     .modal-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:12px}
-    
     .btn, .btn-open-all{
       background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);
       font-size:1.0rem;line-height:1.2;padding:6px 10px;cursor:pointer;flex-shrink:0;
       display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
     }
     .btn.active{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
-    .btn-open-all{
-      background:var(--accent);border-color:var(--accent);color:#fff;font-size:.85rem;
-      font-weight:600;display:none;white-space:nowrap;
-    }
-    .btn-open-all:hover{opacity:.9}
+    .btn-open-all{background:var(--accent);border-color:var(--accent);color:#fff;font-size:.85rem;font-weight:600;display:none;white-space:nowrap}
     .btn-action{width:100%;background:var(--accent);color:#fff;border:none;padding:12px;border-radius:6px;font-weight:600;cursor:pointer;margin-top:14px}
-    
     .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:110}
     .sidebar{width:290px;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;z-index:120;transition:all .25s ease;overflow:hidden;white-space:nowrap}
     .sidebar.collapsed{width:0!important;border:none!important;visibility:hidden}
@@ -44,40 +37,31 @@
     .sidebar-footer{padding:16px;border-top:1px solid var(--border)}
     .nav-link{display:block;text-align:center;color:var(--accent);text-decoration:none;font-size:.82rem;font-weight:600;padding:8px;border-radius:6px;background:var(--accent-dim);margin-bottom:8px}
     .main{flex-grow:1;overflow-y:auto;position:relative}
-    
-    .stream-header{position:sticky;top:0;z-index:50;background:rgba(18,20,24,.55);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;transition:transform .28s ease}
+    .stream-header{position:sticky;top:0;z-index:50;background:rgba(18,20,24,.55);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;transition:transform .28s ease}
     .stream-header.header-hidden{transform:translateY(-100%)}
     [data-theme="light"] .stream-header{background:rgba(248,250,252,.65)}
-    
     .header-left{display:flex;align-items:center;gap:12px;flex-shrink:0;min-width:0}
     .header-title-group{display:flex;flex-direction:column;gap:2px}
     .stream-header h2{font-size:1.15rem;font-weight:700;color:var(--bold);white-space:nowrap}
     .header-meta{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap}
-    
     .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:580px;flex-wrap:nowrap}
-    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 140px;min-width:90px;height:34px;box-sizing:border-box}
-    
-    /* Opt 4: content-visibility für maximale Scroll-Performance */
+    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 140px;min-width:90px;height:34px}
     .cards-grid{padding:14px 16px calc(24px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
     .feed-card{
       background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;
       display:flex;flex-direction:column;justify-content:space-between;
       transition:transform .15s ease, background .15s ease;
-      content-visibility:auto;contain-intrinsic-size:0 150px;
-      touch-action:pan-y;user-select:none;
+      content-visibility:auto;contain-intrinsic-size:0 150px;touch-action:pan-y;
     }
     .feed-card:hover{transform:translateY(-2px);background:var(--hover)}
-    
     .unread-dot-btn{background:none;border:none;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px}
     .unread-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);transition:all .2s}
     .feed-card.seen .unread-dot{background:var(--muted);box-shadow:none;opacity:.55}
     .feed-card.read .unread-dot{background:transparent;box-shadow:none;border:1.5px solid var(--muted);opacity:.35}
     .feed-card.read .feed-title{color:var(--muted)}
-    
-    .action-icon-btn{background:none;border:none;padding:0;cursor:pointer;font-size:.9rem;opacity:.4;transition:all .15s;display:inline-flex;align-items:center;justify-content:center}
+    .action-icon-btn{background:none;border:none;padding:0;cursor:pointer;font-size:.9rem;opacity:.4;transition:all .15s;display:inline-flex;align-items:center}
     .action-icon-btn:hover{opacity:.9;transform:scale(1.15)}
     .feed-card.bookmarked .bookmark-btn{opacity:1;filter:drop-shadow(0 0 4px rgba(234,179,8,.6))}
-    
     .feed-meta{display:flex;align-items:center;gap:6px;font-size:.75rem;margin-bottom:8px;flex-wrap:wrap}
     .feed-source{color:var(--accent);font-weight:600}
     .feed-time,.feed-others{color:var(--muted);font-size:.72rem}
@@ -88,17 +72,14 @@
     .feed-thumb{width:100%;height:150px;object-fit:cover;border-radius:6px;margin-top:auto}
     .meta-clickable{color:var(--accent);cursor:pointer}
     .meta-clickable:hover{text-decoration:underline}
-
     .toast-container{position:fixed;bottom:20px;right:20px;z-index:1000;display:none;max-width:380px;background:var(--sidebar);border:1px solid var(--border);border-radius:10px;padding:12px 16px;box-shadow:0 8px 24px rgba(0,0,0,.45);font-size:.85rem;color:var(--text);align-items:center;gap:12px;animation:slideUp .25s ease}
     @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
     @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
     .spin{display:inline-block;animation:spin 1.2s linear infinite}
-    
     .toast-link{color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
     .toast-link:hover{text-decoration:underline;color:var(--link)}
     .toast-container a{color:var(--link);text-decoration:none;font-weight:600}
     .toast-close{background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;padding:0 4px}
-
     @media (max-width:768px){
       .sidebar{position:fixed;inset:0 auto 0 0;transform:translateX(-100%);box-shadow:4px 0 24px rgba(0,0,0,.6)}
       .sidebar.open{transform:translateX(0);visibility:visible!important;width:290px!important}
@@ -107,12 +88,10 @@
       .header-left{width:100%}
       .stream-header h2{font-size:1rem;white-space:normal}
       .header-meta{font-size:.75rem;flex-wrap:wrap}
-      
       .header-right{width:100%;max-width:100%;display:flex;gap:6px;flex-wrap:nowrap;justify-content:space-between}
       .search-input{flex:1 1 auto;min-width:80px;max-width:none}
       .btn, .btn-open-all{padding:6px 8px;font-size:.92rem;height:34px}
       .btn-open-all{font-size:.75rem}
-      
       .cards-grid{grid-template-columns:1fr;gap:8px;padding:8px 8px calc(24px + env(safe-area-inset-bottom,0px))}
       .feed-card{padding:14px}
       .toast-container{left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));max-width:none}
@@ -128,7 +107,6 @@
       <div id="auth-err" style="color:#ef4444;font-size:.8rem;margin-top:8px;display:none">Ungültiges Passwort!</div>
     </div>
   </div>
-
   <div id="health-modal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header"><h2>📡 Feed-Status</h2><button class="btn" onclick="toggleModal('health-modal',false)">&times;</button></div>
@@ -141,7 +119,6 @@
       <button class="btn-action" onclick="toggleModal('health-modal',false)">Schließen</button>
     </div>
   </div>
-
   <div id="dup-modal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header"><h2>🧹 Bereinigte Duplikate</h2><button class="btn" onclick="toggleModal('dup-modal',false)">&times;</button></div>
@@ -149,12 +126,7 @@
       <button class="btn-action" onclick="toggleModal('dup-modal',false)">Schließen</button>
     </div>
   </div>
-
-  <div id="toast" class="toast-container">
-    <span id="toast-msg" style="flex:1"></span>
-    <button class="toast-close" onclick="hideToast()">&times;</button>
-  </div>
-
+  <div id="toast" class="toast-container"><span id="toast-msg" style="flex:1"></span><button class="toast-close" onclick="hideToast()">&times;</button></div>
   <div class="sidebar-backdrop" id="backdrop" onclick="toggleSidebar()"></div>
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header"><h1>⚡ News-Hub</h1><button class="btn" onclick="toggleSidebar()">&times;</button></div>
@@ -164,7 +136,6 @@
       <button class="source-btn" style="text-align:center;background:var(--border)" onclick="markAllRead()">✓ Alle gelesen</button>
     </div>
   </aside>
-
   <main class="main">
     <div class="stream-header">
       <div class="header-left">
@@ -188,33 +159,17 @@
     </div>
     <div id="articles-container" class="cards-grid"></div>
   </main>
-
   <script>
     window.IS_ARCHIVE = false;
-    const configuredSources = ["ComputerBase", "OMG! Ubuntu!", "9to5Google", "Topthemen - SZ.de", "WinFuture News", "GoogleWatchBlog", "mobiFlip", "Android Headlines", "Android Police", "teltarif.de", "Düsseldorf | RP ONLINE", "Caschys Blog", "Notebookcheck.com", "Deskmodder.de", "heise online News", "Android Authority", "XDA", "Travel-Dealz.de", "SmartDroid.de", "Aktuell - FAZ.NET", "Android Sage", "9to5Linux"], feedHealth = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 304}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 200}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 304}, {"title": "Android Headlines", "status": "ok", "code": 304}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 304}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "exception", "code": "timeout"}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 304}, {"title": "SmartDroid.de", "status": "ok", "code": 200}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 304}, {"title": "9to5Linux", "status": "ok", "code": 304}], buildTime = "20.09.2026 12:49";
+    const configuredSources = ["ComputerBase", "OMG! Ubuntu!", "9to5Google", "Topthemen - SZ.de", "WinFuture News", "GoogleWatchBlog", "mobiFlip", "Android Headlines", "Android Police", "teltarif.de", "Düsseldorf | RP ONLINE", "Caschys Blog", "Notebookcheck.com", "Deskmodder.de", "heise online News", "Android Authority", "XDA", "Travel-Dealz.de", "SmartDroid.de", "Aktuell - FAZ.NET", "Android Sage", "9to5Linux"], feedHealth = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 304}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "ok", "code": 304}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 304}, {"title": "Android Headlines", "status": "ok", "code": 304}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 304}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "exception", "code": "timeout"}, {"title": "heise online News", "status": "ok", "code": 304}, {"title": "Android Authority", "status": "ok", "code": 304}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 304}, {"title": "SmartDroid.de", "status": "ok", "code": 200}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 304}, {"title": "9to5Linux", "status": "ok", "code": 304}], buildTime = "20.09.2026 12:50";
     let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, sIndex = -1, sTimer = null, toastTimer = null, pollInterval = null;
 
-    // Service Worker registrieren (PWA / Offline)
-    if('serviceWorker' in navigator){
-      window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(()=>{}); });
-    }
+    if('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 
-    const docElem = document.createElement('textarea');
-    function cleanTitle(s) {
-      if (!s) return '';
-      docElem.innerHTML = s;
-      let val = docElem.value;
-      if (val.includes('&')) { docElem.innerHTML = val; val = docElem.value; }
-      return val.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0*39;/g, "'").replace(/&apos;/g, "'");
-    }
-
-    const esc = s => cleanTitle(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const hStr = s => { let h = 0; for(let i=0;i<(s||'').length;i++){ h = ((h<<5)-h)+s.charCodeAt(i); h |= 0; } return Math.abs(h); };
-    
     const relTime = d => {
       if(!d) return ''; const diff = Math.floor((Date.now() - new Date(d))/1000);
-      if(isNaN(diff)) return ''; if(diff < 60) return 'gerade'; if(diff < 3600) return `vor ${Math.floor(diff/60)}m`;
-      if(diff < 86400) return `vor ${Math.floor(diff/3600)}h`; return `vor ${Math.floor(diff/86400)}d`;
+      return isNaN(diff)?'':diff<60?'gerade':diff<3600?`vor ${Math.floor(diff/60)}m`:diff<86400?`vor ${Math.floor(diff/3600)}h`:`vor ${Math.floor(diff/86400)}d`;
     };
 
     function initTheme(){ document.documentElement.setAttribute('data-theme', localStorage.getItem('hub_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')); }
@@ -233,25 +188,15 @@
       const t = document.getElementById('toast');
       document.getElementById('toast-msg').innerHTML = htmlMsg;
       t.style.display = 'flex';
-      if(autoHideMs > 0){
-        toastTimer = setTimeout(() => { t.style.display = 'none'; }, autoHideMs);
-      }
+      if(autoHideMs > 0) toastTimer = setTimeout(() => { t.style.display = 'none'; }, autoHideMs);
     }
     function hideToast(){ clearTimeout(toastTimer); document.getElementById('toast').style.display = 'none'; }
 
-    // Opt 3: Native Share API mit Clipboard-Fallback
     async function shareArticle(title, url){
-      if(navigator.share){
-        try {
-          await navigator.share({ title: cleanTitle(title), url: url });
-        } catch(e){}
-      } else {
-        try {
-          await navigator.clipboard.writeText(url);
-          showToast('📋 Link in die Zwischenablage kopiert!', 2500);
-        } catch(e){
-          showToast('Kopieren fehlgeschlagen.', 2500);
-        }
+      if(navigator.share){ try { await navigator.share({ title: title, url: url }); } catch(e){} }
+      else {
+        try { await navigator.clipboard.writeText(url); showToast('📋 Link in die Zwischenablage kopiert!', 2500); }
+        catch(e){ showToast('Kopieren fehlgeschlagen.', 2500); }
       }
     }
 
@@ -260,23 +205,14 @@
       const el = document.getElementById('saved-count');
       if(el) el.textContent = b.length;
       const openBtn = document.getElementById('open-all-btn');
-      if(openBtn) {
-        openBtn.style.display = (onlySaved && b.length > 0) ? 'inline-flex' : 'none';
-      }
+      if(openBtn) openBtn.style.display = (onlySaved && b.length > 0) ? 'inline-flex' : 'none';
     }
 
     function toggleBookmark(id){
-      let b = getStorage('bookmarked_news');
-      const idx = b.indexOf(id);
+      let b = getStorage('bookmarked_news'); const idx = b.indexOf(id);
       const el = document.querySelector(`.feed-card[data-id="${id}"]`);
-      if(idx >= 0){
-        b.splice(idx, 1);
-        if(el) el.classList.remove('bookmarked');
-      } else {
-        b.push(id);
-        if(el) el.classList.add('bookmarked');
-        if(navigator.vibrate) navigator.vibrate(20);
-      }
+      if(idx >= 0){ b.splice(idx, 1); if(el) el.classList.remove('bookmarked'); }
+      else { b.push(id); if(el) el.classList.add('bookmarked'); if(navigator.vibrate) navigator.vibrate(20); }
       setStorage('bookmarked_news', b);
       updateBookmarkCount();
       if(onlySaved) applyFilters();
@@ -286,41 +222,22 @@
       onlySaved = !onlySaved;
       const btn = document.getElementById('saved-filter-btn');
       if(btn) btn.classList.toggle('active', onlySaved);
-      updateBookmarkCount();
-      applyFilters();
+      updateBookmarkCount(); applyFilters();
       const t = document.getElementById('current-title');
-      if(t && onlySaved) {
-        t.textContent = `🔖 ${getStorage('bookmarked_news').length} Gemerkte News`;
-      } else if(t) {
-        t.textContent = window.IS_ARCHIVE ? `Archiv: ${liveArticles.length} News bis ${buildTime}` : `${liveArticles.length} News bis ${buildTime}`;
-      }
+      if(t) t.textContent = onlySaved ? `🔖 ${getStorage('bookmarked_news').length} Gemerkte News` : (window.IS_ARCHIVE ? `Archiv: ${liveArticles.length} News bis ${buildTime}` : `${liveArticles.length} News bis ${buildTime}`);
     }
 
     function openAllBookmarked(){
       const bList = getStorage('bookmarked_news');
       if(!bList.length) return;
-      
       const toOpen = liveArticles.filter(a => bList.includes(String(hStr(a.link||''))));
       if(!toOpen.length) return;
-
-      toOpen.forEach(a => { window.open(a.link, '_blank'); });
-
+      toOpen.forEach(a => window.open(a.link, '_blank'));
       const r = getStorage('read_news');
-      toOpen.forEach(a => {
-        const id = String(hStr(a.link||''));
-        if(!r.includes(id)) r.push(id);
-      });
-      setStorage('read_news', r);
-      setStorage('bookmarked_news', []);
-      
-      document.querySelectorAll('.feed-card.bookmarked').forEach(c => {
-        c.classList.remove('bookmarked');
-        c.classList.add('read');
-      });
-      
-      updateBookmarkCount();
-      showToast(`🚀 ${toOpen.length} Artikel geöffnet und als gelesen markiert.`, 4000);
-      toggleSavedFilter();
+      toOpen.forEach(a => { const id = String(hStr(a.link||'')); if(!r.includes(id)) r.push(id); });
+      setStorage('read_news', r); setStorage('bookmarked_news', []);
+      document.querySelectorAll('.feed-card.bookmarked').forEach(c => { c.classList.remove('bookmarked'); c.classList.add('read'); });
+      updateBookmarkCount(); showToast(`🚀 ${toOpen.length} Artikel geöffnet und als gelesen markiert.`, 4000); toggleSavedFilter();
     }
 
     function toggleRead(id){
@@ -329,42 +246,25 @@
       if(idx>=0){ r.splice(idx,1); if(el) el.classList.remove('read'); } else { r.push(id); if(el) el.classList.add('read'); }
       setStorage('read_news', r);
     }
+
     function markAllRead(){
       const r = getStorage('read_news');
       document.querySelectorAll('.feed-card').forEach(c => { c.classList.add('read'); if(!r.includes(c.dataset.id)) r.push(c.dataset.id); });
       setStorage('read_news', r);
     }
 
-    // Opt 5: Touch-Swipe Listener (Rechts = Teilen, Links = Lesezeichen)
     function attachSwipeHandler(card, title, link, id){
-      let touchStartX = 0, touchStartY = 0, touchDiffX = 0;
-      card.addEventListener('touchstart', e => {
-        touchStartX = e.changedTouches[0].screenX;
-        touchStartY = e.changedTouches[0].screenY;
-        touchDiffX = 0;
-      }, {passive:true});
-
+      let touchStartX = 0, touchStartY = 0;
+      card.addEventListener('touchstart', e => { touchStartX = e.changedTouches[0].screenX; touchStartY = e.changedTouches[0].screenY; }, {passive:true});
       card.addEventListener('touchmove', e => {
-        const diffX = e.changedTouches[0].screenX - touchStartX;
-        const diffY = e.changedTouches[0].screenY - touchStartY;
-        if(Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 100){
-          card.style.transform = `translateX(${diffX * 0.4}px)`;
-          touchDiffX = diffX;
-        }
+        const diffX = e.changedTouches[0].screenX - touchStartX, diffY = e.changedTouches[0].screenY - touchStartY;
+        if(Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 100) card.style.transform = `translateX(${diffX * 0.4}px)`;
       }, {passive:true});
-
       card.addEventListener('touchend', e => {
         card.style.transform = '';
-        const diffX = e.changedTouches[0].screenX - touchStartX;
-        const diffY = e.changedTouches[0].screenY - touchStartY;
+        const diffX = e.changedTouches[0].screenX - touchStartX, diffY = e.changedTouches[0].screenY - touchStartY;
         if(Math.abs(diffX) > 65 && Math.abs(diffX) > Math.abs(diffY) * 1.5){
-          if(diffX > 0){
-            // Nach rechts: Teilen
-            shareArticle(title, link);
-          } else {
-            // Nach links: Lesezeichen toggle
-            toggleBookmark(id);
-          }
+          if(diffX > 0) shareArticle(title, link); else toggleBookmark(id);
         }
       }, {passive:true});
     }
@@ -380,7 +280,7 @@
       const sl = document.getElementById('source-list');
       if(sl) {
         sl.innerHTML = `<li><button class="source-btn active" onclick="filterSource('all',this)"><span>Alle</span><span class="badge">${articles.length}</span></button></li>` +
-          sorted.map(s => `<li><button class="source-btn" onclick="filterSource('${esc(s)}',this)"><span>${esc(s)}</span><span class="badge">${counts[s]||0}</span></button></li>`).join('');
+          sorted.map(s => `<li><button class="source-btn" onclick="filterSource('${s}',this)"><span>${s}</span><span class="badge">${counts[s]||0}</span></button></li>`).join('');
       }
 
       const rList = getStorage('read_news'), sList = getStorage('seen_news'), bList = getStorage('bookmarked_news');
@@ -389,33 +289,27 @@
       const cont = document.getElementById('articles-container');
       if(cont) {
         cont.innerHTML = articles.map(a => {
-          const id = hStr(a.link||''), oth = (a.other_sources&&a.other_sources.length)?`<span class="feed-others">• Auch bei: ${esc(a.other_sources.join(", "))}</span>`:'';
+          const id = hStr(a.link||''), oth = (a.other_sources&&a.other_sources.length)?`<span class="feed-others">• Auch bei: ${a.other_sources.join(", ")}</span>`:'';
           const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" onerror="this.remove()">` : '';
-          let cls = '';
-          if(rList.includes(String(id))) cls += ' read';
-          if(sList.includes(String(id))) cls += ' seen';
-          if(bList.includes(String(id))) cls += ' bookmarked';
+          let cls = (rList.includes(String(id))?' read':'') + (sList.includes(String(id))?' seen':'') + (bList.includes(String(id))?' bookmarked':'');
 
-          return `<article class="feed-card${cls}" data-id="${id}" data-link="${esc(a.link||'')}" data-title="${esc(a.title||'')}" data-sources="${esc([a.source||'',...(a.other_sources||[])].join(';;;'))}">
+          return `<article class="feed-card${cls}" data-id="${id}" data-link="${a.link||''}" data-title="${a.title||''}" data-sources="${[a.source||'',...(a.other_sources||[])].join(';;;')}">
             <div class="feed-content">
               <div class="feed-meta">
                 <button class="action-icon-btn bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Für später merken">🔖</button>
-                <button class="action-icon-btn" onclick="event.stopPropagation();shareArticle('${esc(a.title||'')}', '${esc(a.link||'')}')" title="Artikel teilen">📤</button>
-                <span class="feed-source">${esc(a.source||'Quelle')}</span>
-                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Als gelesen / ungelesen"><span class="unread-dot"></span></button>
+                <button class="action-icon-btn" onclick="event.stopPropagation();shareArticle('${a.title||''}', '${a.link||''}')" title="Artikel teilen">📤</button>
+                <span class="feed-source">${a.source||'Quelle'}</span>
+                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Gelesen / Ungelesen"><span class="unread-dot"></span></button>
                 <span class="feed-time">${relTime(a.published)}</span>
                 ${oth}
               </div>
-              <a class="feed-title" href="${esc(a.link||'#')}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${cleanTitle(a.title||'Ohne Titel')}</a>
-              <p class="feed-summary">${cleanTitle(a.summary||'')}</p>
+              <a class="feed-title" href="${a.link||'#'}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${a.title||'Ohne Titel'}</a>
+              <p class="feed-summary">${a.summary||''}</p>
             </div>${img}
           </article>`;
         }).join('');
 
-        // Swipe Gesten an Karten binden
-        cont.querySelectorAll('.feed-card').forEach(c => {
-          attachSwipeHandler(c, c.dataset.title, c.dataset.link, c.dataset.id);
-        });
+        cont.querySelectorAll('.feed-card').forEach(c => attachSwipeHandler(c, c.dataset.title, c.dataset.link, c.dataset.id));
       }
     }
 
@@ -424,17 +318,17 @@
       const m = {}; let tot = 0;
       liveArticles.forEach(a => {
         (a.merged_details||[]).forEach(d => { const s = d.source||"Unbekannt"; (m[s]=m[s]||[]).push(d); tot++; });
-        (a.other_sources||[]).forEach(src => { if(!m[src]){ m[src]=[{source:src,title:"Altbestand ohne Einzeltitel",link:a.link,matched_with:a.title,is_legacy:true}]; tot++; } });
+        (a.other_sources||[]).forEach(src => { if(!m[src]){ m[src]=[{source:src,title:"Altbestand",link:a.link,matched_with:a.title,is_legacy:true}]; tot++; } });
       });
       const entries = Object.entries(m).sort((a,b)=>b[1].length-a[1].length);
       el.innerHTML = !entries.length ? '<p style="color:var(--muted);padding:10px 0">Keine Duplikate gefunden.</p>' :
         `<div style="margin-bottom:10px;font-weight:600;color:var(--accent)">Gesamt: ${tot} bereinigte Berichte</div>` +
         entries.map(([src, items], i) => `<div style="border-bottom:1px solid var(--border);padding:6px 0">
           <div class="modal-row" style="border:none;cursor:pointer" onclick="const e=document.getElementById('dd-${i}');e.style.display=e.style.display==='none'?'block':'none'">
-            <strong>${esc(src)}</strong><span class="badge">${items.length} ▾</span>
+            <strong>${src}</strong><span class="badge">${items.length} ▾</span>
           </div>
           <div id="dd-${i}" style="display:none;padding-left:8px;border-left:2px solid var(--accent);margin-top:4px">
-            ${items.map(it=>`<div style="margin-bottom:6px">${it.is_legacy?cleanTitle(it.title):`<a href="${esc(it.link)}" target="_blank" rel="noopener" style="color:var(--link);text-decoration:none">🔗 ${cleanTitle(it.title)}</a>`}<div style="color:var(--muted);font-size:.72rem">↳ Mit: "${cleanTitle(it.matched_with)}"</div></div>`).join('')}
+            ${items.map(it=>`<div style="margin-bottom:6px">${it.is_legacy?it.title:`<a href="${it.link}" target="_blank" rel="noopener" style="color:var(--link);text-decoration:none">🔗 ${it.title}</a>`}<div style="color:var(--muted);font-size:.72rem">↳ Mit: "${it.matched_with}"</div></div>`).join('')}
           </div>
         </div>`).join('');
       toggleModal('dup-modal', true);
@@ -452,10 +346,7 @@
       const bList = getStorage('bookmarked_news');
       document.querySelectorAll('.feed-card').forEach(c => {
         const id = c.dataset.id;
-        const mSaved = !onlySaved || bList.includes(id);
-        const mSrc = activeSource==='all' || (c.dataset.sources||'').split(';;;').includes(activeSource);
-        const mQ = !searchQuery || c.textContent.toLowerCase().includes(searchQuery);
-        c.style.display = (mSaved && mSrc && mQ) ? '' : 'none';
+        c.style.display = ((!onlySaved || bList.includes(id)) && (activeSource==='all' || (c.dataset.sources||'').split(';;;').includes(activeSource)) && (!searchQuery || c.textContent.toLowerCase().includes(searchQuery))) ? '' : 'none';
       });
     }
 
@@ -464,80 +355,57 @@
       if(!tk){
         showToast(`
           <div style="display:flex;flex-direction:column;gap:6px">
-            <span>GitHub PAT eingeben:</span>
+            <span>GitHub PAT:</span>
             <div style="display:flex;gap:6px">
               <input type="password" id="toast-token-inp" class="search-input" style="padding:4px 8px;font-size:.8rem;height:28px" placeholder="ghp_...">
               <button class="btn" style="font-size:.8rem;padding:4px 8px;height:28px" onclick="saveToastToken()">OK</button>
             </div>
           </div>
         `, 0);
-      } else {
-        dispatchWorkflow(tk);
-      }
+      } else { dispatchWorkflow(tk); }
     }
 
     function saveToastToken(){
       const el = document.getElementById('toast-token-inp');
-      if(el && el.value.trim()){
-        const val = el.value.trim();
-        localStorage.setItem('gh_token', val);
-        dispatchWorkflow(val);
-      }
+      if(el && el.value.trim()){ const val = el.value.trim(); localStorage.setItem('gh_token', val); dispatchWorkflow(val); }
     }
 
     async function dispatchWorkflow(tk){
-      showToast('<a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" class="toast-link"><span class="spin">🔄</span> Starte Build im Hintergrund... ↗</a>', 0);
+      showToast('<a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" class="toast-link"><span class="spin">🔄</span> Starte Build... ↗</a>', 0);
       const startTime = new Date(Date.now() - 30000).toISOString();
       try {
         const r = await fetch('https://api.github.com/repos/schoerb/news-hub/actions/workflows/deploy.yml/dispatches', {
-          method:'POST',
-          headers:{'Accept':'application/vnd.github+json','Authorization':'Bearer ' + tk},
-          body:JSON.stringify({ref:'main'})
+          method:'POST', headers:{'Accept':'application/vnd.github+json','Authorization':'Bearer ' + tk}, body:JSON.stringify({ref:'main'})
         });
         if(r.status === 204){
           showToast('<a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" class="toast-link"><span class="spin">⏳</span> GitHub Action läuft... ↗</a>', 0);
           startWorkflowPolling(tk, startTime);
         } else {
-          showToast(`⚠️ Start fehlgeschlagen (HTTP ${r.status}). <a href="#" onclick="localStorage.removeItem('gh_token');triggerWorkflow();return false;">Token ändern</a>`, 8000);
+          showToast(`⚠️ Fehler (${r.status}). <a href="#" onclick="localStorage.removeItem('gh_token');triggerWorkflow();return false;">Token neu eingeben</a>`, 8000);
         }
-      } catch(e){
-        showToast('❌ Netzwerkfehler: ' + esc(e.message), 6000);
-      }
+      } catch(e){ showToast('❌ Netzwerkfehler: ' + e.message, 6000); }
     }
 
     function startWorkflowPolling(tk, startTime){
       clearInterval(pollInterval);
       let attempts = 0;
-      const maxAttempts = 50;
-
       pollInterval = setInterval(async () => {
-        attempts++;
-        if(attempts > maxAttempts){
-          clearInterval(pollInterval);
-          showToast('⚠️ Zeitüberschreitung beim Warten auf die Action. <a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener">Actions prüfen ↗</a>', 8000);
-          return;
-        }
-
+        if(++attempts > 50){ clearInterval(pollInterval); showToast('⚠️ Timeout. <a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener">Actions prüfen ↗</a>', 8000); return; }
         try {
           const r = await fetch('https://api.github.com/repos/schoerb/news-hub/actions/runs?event=workflow_dispatch&per_page=1', {
             headers:{'Accept':'application/vnd.github+json','Authorization':'Bearer ' + tk}
           });
           if(!r.ok) return;
-          const data = await r.json();
-          const run = data.workflow_runs && data.workflow_runs[0];
-          const runUrl = (run && run.html_url) ? run.html_url : 'https://github.com/schoerb/news-hub/actions';
-          
+          const data = await r.json(), run = data.workflow_runs && data.workflow_runs[0];
+          const runUrl = (run && run.html_url) || 'https://github.com/schoerb/news-hub/actions';
           if(run && new Date(run.created_at) >= new Date(startTime)){
-            if(run.status === 'in_progress' || run.status === 'queued'){
-              showToast(`<a href="${runUrl}" target="_blank" rel="noopener" class="toast-link"><span class="spin">⏳</span> Build läuft... (${attempts * 5}s) ↗</a>`, 0);
-            } else if(run.status === 'completed'){
+            if(run.status === 'in_progress' || run.status === 'queued') showToast(`<a href="${runUrl}" target="_blank" rel="noopener" class="toast-link"><span class="spin">⏳</span> Build läuft... (${attempts * 5}s) ↗</a>`, 0);
+            else if(run.status === 'completed'){
               clearInterval(pollInterval);
               if(run.conclusion === 'success'){
-                showToast(`<a href="${runUrl}" target="_blank" rel="noopener" class="toast-link">🎉 Update abgeschlossen! Lade Feeds neu... ↗</a>`, 0);
+                showToast(`<a href="${runUrl}" target="_blank" rel="noopener" class="toast-link">🎉 Update fertig! Aktualisiere... ↗</a>`, 0);
                 setTimeout(() => reloadDataSilent(), 2500);
-              } else {
-                showToast(`❌ Build fehlgeschlagen (${run.conclusion}). <a href="${runUrl}" target="_blank" rel="noopener">Log ansehen ↗</a>`, 9000);
-              }
+              } else { showToast(`❌ Fehlgeschlagen (${run.conclusion}). <a href="${runUrl}" target="_blank" rel="noopener">Log ↗</a>`, 9000); }
             }
           }
         } catch(e) {}
@@ -550,16 +418,9 @@
         if(!r.ok) throw new Error();
         rawData = await r.text();
         const parsed = parsePayload(localStorage.getItem('hub_key')||"");
-        if(parsed) {
-          globalArticles = parsed;
-          onLoaded();
-          showToast('✅ Feeds erfolgreich aktualisiert!', 5000);
-        } else {
-          location.reload();
-        }
-      } catch(e){
-        location.reload();
-      }
+        if(parsed) { globalArticles = parsed; onLoaded(); showToast('✅ Feeds aktualisiert!', 4000); }
+        else { location.reload(); }
+      } catch(e){ location.reload(); }
     }
 
     function parsePayload(pw){
@@ -568,8 +429,7 @@
         if(rawData.trim().startsWith('[')) return JSON.parse(rawData);
         if(!pw) return null;
         const dec = CryptoJS.AES.decrypt(rawData, pw).toString(CryptoJS.enc.Utf8);
-        if(!dec || !dec.startsWith('[')) return null;
-        return JSON.parse(dec);
+        return (dec && dec.startsWith('[')) ? JSON.parse(dec) : null;
       } catch(e){ return null; }
     }
 
@@ -582,47 +442,28 @@
         rawData = await r.text();
       } catch(e){ document.getElementById('current-title').textContent = "Fehler beim Laden von data.json"; return; }
 
-      let parsed = parsePayload('');
-      if(!parsed) {
-        const savedPw = localStorage.getItem('hub_key');
-        if(savedPw) parsed = parsePayload(savedPw);
-      }
-
-      if(parsed) {
-        globalArticles = parsed;
-        onLoaded();
-      } else {
-        document.getElementById('auth-overlay').style.display = 'flex';
-        document.getElementById('auth-pwd').focus();
-      }
+      let parsed = parsePayload('') || (localStorage.getItem('hub_key') ? parsePayload(localStorage.getItem('hub_key')) : null);
+      if(parsed) { globalArticles = parsed; onLoaded(); }
+      else { document.getElementById('auth-overlay').style.display = 'flex'; document.getElementById('auth-pwd').focus(); }
     }
 
     function submitAuth(){
-      const pw = document.getElementById('auth-pwd').value;
-      const parsed = parsePayload(pw);
-      if(parsed) {
-        localStorage.setItem('hub_key', pw);
-        globalArticles = parsed;
-        onLoaded();
-      } else {
-        document.getElementById('auth-err').style.display = 'block';
-      }
+      const pw = document.getElementById('auth-pwd').value, parsed = parsePayload(pw);
+      if(parsed) { localStorage.setItem('hub_key', pw); globalArticles = parsed; onLoaded(); }
+      else { document.getElementById('auth-err').style.display = 'block'; }
     }
 
     function onLoaded(){
       try {
         document.getElementById('auth-overlay').style.display = 'none';
         const valid = new Set(globalArticles.map(a => String(hStr(a.link||''))));
-        setStorage('read_news', getStorage('read_news').filter(id => valid.has(id)));
-        setStorage('seen_news', getStorage('seen_news').filter(id => valid.has(id)));
-        setStorage('bookmarked_news', getStorage('bookmarked_news').filter(id => valid.has(id)));
+        ['read_news', 'seen_news', 'bookmarked_news'].forEach(k => setStorage(k, getStorage(k).filter(id => valid.has(id))));
 
         const now = Date.now(), c24 = new Date(now - 86400000), c48 = new Date(now - 172800000);
         liveArticles = globalArticles.filter(a => {
           if (!a.published) return !window.IS_ARCHIVE;
           const p = new Date(a.published);
-          if (isNaN(p.getTime())) return !window.IS_ARCHIVE;
-          return window.IS_ARCHIVE ? (p < c24 && p >= c48) : (p >= c24);
+          return isNaN(p.getTime()) ? !window.IS_ARCHIVE : (window.IS_ARCHIVE ? (p < c24 && p >= c48) : (p >= c24));
         });
         if(!window.IS_ARCHIVE && !liveArticles.length && globalArticles.length) liveArticles = globalArticles;
 
@@ -645,8 +486,7 @@
         mEl.addEventListener('scroll', () => {
           const y = mEl.scrollTop;
           if(Math.abs(lastY-y) > 6 && document.activeElement !== document.getElementById('search-box')) {
-            hEl.classList.toggle('header-hidden', y > lastY && y > 50);
-            lastY = y;
+            hEl.classList.toggle('header-hidden', y > lastY && y > 50); lastY = y;
           }
         }, {passive:true});
 
@@ -654,13 +494,10 @@
         if(hl) {
           hl.innerHTML = feedHealth.map(f => {
             const ok = f.status==='ok'||f.code===304||f.code===200;
-            return `<div class="modal-row"><span>${ok?'🟢':'🔴'} ${esc(f.title)}</span><span style="color:${ok?'var(--muted)':'#ef4444'};font-family:monospace">${f.code||f.status}</span></div>`;
+            return `<div class="modal-row"><span>${ok?'🟢':'🔴'} ${f.title}</span><span style="color:${ok?'var(--muted)':'#ef4444'};font-family:monospace">${f.code||f.status}</span></div>`;
           }).join('');
         }
-      } catch(err) {
-        console.error(err);
-        document.getElementById('current-title').textContent = "Fehler: " + err.message;
-      }
+      } catch(err) { console.error(err); }
     }
 
     document.addEventListener('visibilitychange', () => {
@@ -668,13 +505,6 @@
         document.querySelectorAll('.feed-card').forEach(c => {
           const art = liveArticles.find(a => String(hStr(a.link||'')) === c.dataset.id);
           if(art && art.published) c.querySelector('.feed-time').textContent = relTime(art.published);
-        });
-        fetch('data.json?t=' + Date.now(), {cache:'no-store'}).then(r => r.text()).then(t => { 
-          if(t && t !== rawData){ 
-            rawData = t; 
-            const parsed = parsePayload(localStorage.getItem('hub_key')||"");
-            if(parsed) { globalArticles = parsed; onLoaded(); }
-          } 
         });
       }
     });
