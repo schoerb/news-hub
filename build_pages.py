@@ -29,6 +29,7 @@ DEFAULT_PRIO = 1
 MAX_RETENTION_HOURS = 48
 MAX_DEDUP_HOURS = 20
 REMOTE_DATA_URL = "https://schoerb.github.io/news-hub/data.json"
+REMOTE_META_URL = "https://schoerb.github.io/news-hub/cache_meta.json"
 BERLIN_TZ = zoneinfo.ZoneInfo("Europe/Berlin")
 DEDUP_RATIO = float(os.environ.get("DEDUP_RATIO", "0.78"))
 DEDUP_OVERLAP = float(os.environ.get("DEDUP_OVERLAP", "0.65"))
@@ -170,6 +171,7 @@ def load_cached_state():
     force = os.environ.get("FORCE_REFRESH", "").lower() in ("true", "1")
     raw = ""
 
+    # 1. Daten laden
     if os.path.exists("public/data.json"):
         try:
             with open("public/data.json", "r", encoding="utf-8") as f:
@@ -190,12 +192,27 @@ def load_cached_state():
         except Exception:
             pass
 
-    if os.path.exists("cache_meta.json") and not force:
-        try:
-            with open("cache_meta.json", "r", encoding="utf-8") as f:
-                meta = json.load(f)
-        except Exception:
-            pass
+    # 2. HTTP-Metadaten laden (Lokal oder von GitHub Pages Host)
+    if not force:
+        if os.path.exists("cache_meta.json"):
+            try:
+                with open("cache_meta.json", "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+            except Exception:
+                pass
+        elif os.path.exists("public/cache_meta.json"):
+            try:
+                with open("public/cache_meta.json", "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+            except Exception:
+                pass
+        elif REMOTE_META_URL:
+            try:
+                r = session.get(REMOTE_META_URL, timeout=(3.05, 4.0))
+                if r.ok:
+                    meta = r.json()
+            except Exception:
+                pass
 
     for a in arts:
         a["title"] = sanitize_text(a.get("title", ""))
@@ -390,6 +407,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   <title>__PAGE_TITLE__</title>
   <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#121418">
+  <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
   <style>
@@ -441,8 +459,15 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:580px;flex-wrap:nowrap}
     .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 140px;min-width:90px;height:34px;box-sizing:border-box}
     
+    /* Opt 4: content-visibility für maximale Scroll-Performance */
     .cards-grid{padding:14px 16px calc(24px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
-    .feed-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;transition:transform .15s}
+    .feed-card{
+      background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;
+      display:flex;flex-direction:column;justify-content:space-between;
+      transition:transform .15s ease, background .15s ease;
+      content-visibility:auto;contain-intrinsic-size:0 150px;
+      touch-action:pan-y;user-select:none;
+    }
     .feed-card:hover{transform:translateY(-2px);background:var(--hover)}
     
     .unread-dot-btn{background:none;border:none;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px}
@@ -451,8 +476,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .feed-card.read .unread-dot{background:transparent;box-shadow:none;border:1.5px solid var(--muted);opacity:.35}
     .feed-card.read .feed-title{color:var(--muted)}
     
-    .bookmark-btn{background:none;border:none;padding:0;cursor:pointer;font-size:.9rem;opacity:.4;transition:all .15s}
-    .bookmark-btn:hover{opacity:.8;transform:scale(1.15)}
+    .action-icon-btn{background:none;border:none;padding:0;cursor:pointer;font-size:.9rem;opacity:.4;transition:all .15s;display:inline-flex;align-items:center;justify-content:center}
+    .action-icon-btn:hover{opacity:.9;transform:scale(1.15)}
     .feed-card.bookmarked .bookmark-btn{opacity:1;filter:drop-shadow(0 0 4px rgba(234,179,8,.6))}
     
     .feed-meta{display:flex;align-items:center;gap:6px;font-size:.75rem;margin-bottom:8px;flex-wrap:wrap}
@@ -571,6 +596,11 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     const configuredSources = __CONFIGURED_SOURCES__, feedHealth = __HEALTH_DATA__, buildTime = "__NOW_STR__";
     let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, sIndex = -1, sTimer = null, toastTimer = null, pollInterval = null;
 
+    // Service Worker registrieren (PWA / Offline)
+    if('serviceWorker' in navigator){
+      window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(()=>{}); });
+    }
+
     const docElem = document.createElement('textarea');
     function cleanTitle(s) {
       if (!s) return '';
@@ -611,6 +641,22 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     }
     function hideToast(){ clearTimeout(toastTimer); document.getElementById('toast').style.display = 'none'; }
 
+    // Opt 3: Native Share API mit Clipboard-Fallback
+    async function shareArticle(title, url){
+      if(navigator.share){
+        try {
+          await navigator.share({ title: cleanTitle(title), url: url });
+        } catch(e){}
+      } else {
+        try {
+          await navigator.clipboard.writeText(url);
+          showToast('📋 Link in die Zwischenablage kopiert!', 2500);
+        } catch(e){
+          showToast('Kopieren fehlgeschlagen.', 2500);
+        }
+      }
+    }
+
     function updateBookmarkCount(){
       const b = getStorage('bookmarked_news');
       const el = document.getElementById('saved-count');
@@ -631,6 +677,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       } else {
         b.push(id);
         if(el) el.classList.add('bookmarked');
+        if(navigator.vibrate) navigator.vibrate(20);
       }
       setStorage('bookmarked_news', b);
       updateBookmarkCount();
@@ -658,9 +705,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const toOpen = liveArticles.filter(a => bList.includes(String(hStr(a.link||''))));
       if(!toOpen.length) return;
 
-      toOpen.forEach(a => {
-        window.open(a.link, '_blank');
-      });
+      toOpen.forEach(a => { window.open(a.link, '_blank'); });
 
       const r = getStorage('read_news');
       toOpen.forEach(a => {
@@ -692,6 +737,40 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       setStorage('read_news', r);
     }
 
+    // Opt 5: Touch-Swipe Listener (Rechts = Teilen, Links = Lesezeichen)
+    function attachSwipeHandler(card, title, link, id){
+      let touchStartX = 0, touchStartY = 0, touchDiffX = 0;
+      card.addEventListener('touchstart', e => {
+        touchStartX = e.changedTouches[0].screenX;
+        touchStartY = e.changedTouches[0].screenY;
+        touchDiffX = 0;
+      }, {passive:true});
+
+      card.addEventListener('touchmove', e => {
+        const diffX = e.changedTouches[0].screenX - touchStartX;
+        const diffY = e.changedTouches[0].screenY - touchStartY;
+        if(Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 100){
+          card.style.transform = `translateX(${diffX * 0.4}px)`;
+          touchDiffX = diffX;
+        }
+      }, {passive:true});
+
+      card.addEventListener('touchend', e => {
+        card.style.transform = '';
+        const diffX = e.changedTouches[0].screenX - touchStartX;
+        const diffY = e.changedTouches[0].screenY - touchStartY;
+        if(Math.abs(diffX) > 65 && Math.abs(diffX) > Math.abs(diffY) * 1.5){
+          if(diffX > 0){
+            // Nach rechts: Teilen
+            shareArticle(title, link);
+          } else {
+            // Nach links: Lesezeichen toggle
+            toggleBookmark(id);
+          }
+        }
+      }, {passive:true});
+    }
+
     function renderUI(articles){
       let totalDups = 0; counts = {};
       articles.forEach(a => { totalDups += (a.other_sources||[]).length; counts[a.source||"Unbekannt"] = (counts[a.source||"Unbekannt"]||0) + 1; });
@@ -719,10 +798,11 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           if(sList.includes(String(id))) cls += ' seen';
           if(bList.includes(String(id))) cls += ' bookmarked';
 
-          return `<article class="feed-card${cls}" data-id="${id}" data-sources="${esc([a.source||'',...(a.other_sources||[])].join(';;;'))}">
+          return `<article class="feed-card${cls}" data-id="${id}" data-link="${esc(a.link||'')}" data-title="${esc(a.title||'')}" data-sources="${esc([a.source||'',...(a.other_sources||[])].join(';;;'))}">
             <div class="feed-content">
               <div class="feed-meta">
-                <button class="bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Für später merken">🔖</button>
+                <button class="action-icon-btn bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Für später merken">🔖</button>
+                <button class="action-icon-btn" onclick="event.stopPropagation();shareArticle('${esc(a.title||'')}', '${esc(a.link||'')}')" title="Artikel teilen">📤</button>
                 <span class="feed-source">${esc(a.source||'Quelle')}</span>
                 <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Als gelesen / ungelesen"><span class="unread-dot"></span></button>
                 <span class="feed-time">${relTime(a.published)}</span>
@@ -733,6 +813,11 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
             </div>${img}
           </article>`;
         }).join('');
+
+        // Swipe Gesten an Karten binden
+        cont.querySelectorAll('.feed-card').forEach(c => {
+          attachSwipeHandler(c, c.dataset.title, c.dataset.link, c.dataset.id);
+        });
       }
     }
 
@@ -1005,6 +1090,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if(e.key==='o' && sIndex>=0) window.open(vis[sIndex].querySelector('.feed-title').href, '_blank');
       if(e.key==='m' && sIndex>=0) toggleRead(vis[sIndex].dataset.id);
       if(e.key==='b' && sIndex>=0) toggleBookmark(vis[sIndex].dataset.id);
+      if(e.key==='s' && sIndex>=0) shareArticle(vis[sIndex].dataset.title, vis[sIndex].dataset.link);
       if(e.key==='/'){ e.preventDefault(); document.getElementById('search-box').focus(); }
       if(e.key==='Escape'){ toggleModal('health-modal',false); toggleModal('dup-modal',false); hideToast(); }
     });
@@ -1014,6 +1100,63 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </body>
 </html>
 """
+
+# --- Service Worker Script (Offline-Caching) ---
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v1';
+const ASSETS = [
+  './',
+  './index.html',
+  './archive.html',
+  './manifest.json',
+  'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
+  'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'
+];
+
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS)));
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))));
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', e => {
+  // data.json: Network-First mit Cache-Fallback (Offline-Support)
+  if(e.request.url.includes('data.json')){
+    e.respondWith(
+      fetch(e.request).then(res => {
+        const cl = res.clone();
+        caches.open(CACHE_NAME).then(c => c.put(e.request, cl));
+        return res;
+      }).catch(() => caches.match(e.request))
+    );
+    return;
+  }
+  // Statische Assets: Stale-While-Revalidate
+  e.respondWith(
+    caches.match(e.request).then(cached => cached || fetch(e.request))
+  );
+});
+"""
+
+# --- Web App Manifest ---
+APP_MANIFEST = {
+    "name": "News-Hub",
+    "short_name": "NewsHub",
+    "start_url": "./index.html",
+    "display": "standalone",
+    "background_color": "#121418",
+    "theme_color": "#121418",
+    "icons": [
+        {
+            "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>",
+            "sizes": "192x192 512x512",
+            "type": "image/svg+xml"
+        }
+    ]
+}
 
 
 def render_page(feed_health, feeds, is_archive=False):
@@ -1045,7 +1188,11 @@ if __name__ == "__main__":
     feeds = parse_opml()
 
     raw_items, new_meta, feed_health = fetch_all_feeds(feeds, meta)
+
+    # Opt 1: Dauerhafte Speicherung der HTTP-Metadaten
     with open("cache_meta.json", "w", encoding="utf-8") as f:
+        json.dump(new_meta, f, separators=(',', ':'))
+    with open("public/cache_meta.json", "w", encoding="utf-8") as f:
         json.dump(new_meta, f, separators=(',', ':'))
 
     new_items = []
@@ -1079,6 +1226,12 @@ if __name__ == "__main__":
     json_payload = json.dumps(frontend_data, ensure_ascii=False, separators=(',', ':'))
     with open("public/data.json", "w", encoding="utf-8") as f:
         f.write(encrypt_payload(json_payload, pw) if pw else json_payload)
+
+    # Opt 2: Service Worker & Web App Manifest generieren
+    with open("public/sw.js", "w", encoding="utf-8") as f:
+        f.write(SW_SCRIPT)
+    with open("public/manifest.json", "w", encoding="utf-8") as f:
+        json.dump(APP_MANIFEST, f, indent=2)
 
     with open("public/index.html", "w", encoding="utf-8") as f:
         f.write(render_page(feed_health, feeds, is_archive=False))
