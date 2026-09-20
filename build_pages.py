@@ -466,11 +466,13 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .meta-clickable{color:var(--accent);cursor:pointer}
     .meta-clickable:hover{text-decoration:underline}
 
-    /* Toast Container mit Spin-Animation */
     .toast-container{position:fixed;bottom:20px;right:20px;z-index:1000;display:none;max-width:380px;background:var(--sidebar);border:1px solid var(--border);border-radius:10px;padding:12px 16px;box-shadow:0 8px 24px rgba(0,0,0,.45);font-size:.85rem;color:var(--text);align-items:center;gap:12px;animation:slideUp .25s ease}
     @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
     @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
     .spin{display:inline-block;animation:spin 1.2s linear infinite}
+    
+    .toast-link{color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+    .toast-link:hover{text-decoration:underline;color:var(--link)}
     .toast-container a{color:var(--link);text-decoration:none;font-weight:600}
     .toast-close{background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;padding:0 4px}
 
@@ -801,7 +803,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     }
 
     async function dispatchWorkflow(tk){
-      showToast('<span class="spin">🔄</span> Starte Build im Hintergrund...', 0);
+      showToast('<a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" class="toast-link"><span class="spin">🔄</span> Starte Build im Hintergrund... ↗</a>', 0);
       const startTime = new Date(Date.now() - 30000).toISOString();
       try {
         const r = await fetch('https://api.github.com/repos/schoerb/news-hub/actions/workflows/deploy.yml/dispatches', {
@@ -810,7 +812,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           body:JSON.stringify({ref:'main'})
         });
         if(r.status === 204){
-          showToast('<span class="spin">⏳</span> GitHub Action läuft...', 0);
+          showToast('<a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" class="toast-link"><span class="spin">⏳</span> GitHub Action läuft... ↗</a>', 0);
           startWorkflowPolling(tk, startTime);
         } else {
           showToast(`⚠️ Start fehlgeschlagen (HTTP ${r.status}). <a href="#" onclick="localStorage.removeItem('gh_token');triggerWorkflow();return false;">Token ändern</a>`, 8000);
@@ -820,11 +822,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    // Pollt den Status des gestarteten Runs
     function startWorkflowPolling(tk, startTime){
       clearInterval(pollInterval);
       let attempts = 0;
-      const maxAttempts = 50; // max ~4-5 Minuten
+      const maxAttempts = 50;
 
       pollInterval = setInterval(async () => {
         attempts++;
@@ -841,17 +842,18 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           if(!r.ok) return;
           const data = await r.json();
           const run = data.workflow_runs && data.workflow_runs[0];
+          const runUrl = (run && run.html_url) ? run.html_url : 'https://github.com/schoerb/news-hub/actions';
           
           if(run && new Date(run.created_at) >= new Date(startTime)){
             if(run.status === 'in_progress' || run.status === 'queued'){
-              showToast(`<span class="spin">⏳</span> Build läuft... (${attempts * 5}s)`, 0);
+              showToast(`<a href="${runUrl}" target="_blank" rel="noopener" class="toast-link"><span class="spin">⏳</span> Build läuft... (${attempts * 5}s) ↗</a>`, 0);
             } else if(run.status === 'completed'){
               clearInterval(pollInterval);
               if(run.conclusion === 'success'){
-                showToast('🎉 Update abgeschlossen! Lade Feeds neu...', 0);
-                setTimeout(() => reloadDataSilent(), 2500); // 2.5s Puffer für Pages-CDN
+                showToast(`<a href="${runUrl}" target="_blank" rel="noopener" class="toast-link">🎉 Update abgeschlossen! Lade Feeds neu... ↗</a>`, 0);
+                setTimeout(() => reloadDataSilent(), 2500);
               } else {
-                showToast(`❌ Build fehlgeschlagen (${run.conclusion}). <a href="${run.html_url}" target="_blank" rel="noopener">Log ansehen ↗</a>`, 9000);
+                showToast(`❌ Build fehlgeschlagen (${run.conclusion}). <a href="${runUrl}" target="_blank" rel="noopener">Log ansehen ↗</a>`, 9000);
               }
             }
           }
@@ -859,7 +861,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       }, 5500);
     }
 
-    // Lädt die neuen Daten ohne vollen Page-Reload ein
     async function reloadDataSilent(){
       try {
         const r = await fetch('data.json?t=' + Date.now(), {cache:'no-store'});
@@ -944,7 +945,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
         renderUI(liveArticles);
 
-        // Seen Observer
         const timers = new Map(), obs = new IntersectionObserver(ents => {
           ents.forEach(e => {
             const id = e.target.dataset.id; if(!id) return;
@@ -958,7 +958,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         }, {root: document.querySelector('.main'), threshold: 0.6});
         document.querySelectorAll('.feed-card:not(.seen)').forEach(c => obs.observe(c));
 
-        // Header Scroll
         let lastY = 0; const mEl = document.querySelector('.main'), hEl = document.querySelector('.stream-header');
         mEl.addEventListener('scroll', () => {
           const y = mEl.scrollTop;
