@@ -32,7 +32,7 @@ STOPWORDS = {
 
 # --- Connection Pool ---
 session = requests.Session()
-adapter = HTTPAdapter(pool_connections=25, pool_maxsize=25, max_retries=Retry(total=2, backoff_factor=0.2))
+adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=Retry(total=2, backoff_factor=0.2))
 session.mount("https://", adapter)
 session.mount("http://", adapter)
 session.headers.update({
@@ -43,8 +43,7 @@ session.headers.update({
 
 def clean_text(s: str) -> str:
     if not s: return ""
-    for _ in range(2): s = html.unescape(s)
-    return " ".join(re.sub(r"<[^>]+>", " ", s).split()).strip()
+    return " ".join(html.unescape(html.unescape(re.sub(r"<[^>]+>", " ", s))).split()).strip()
 
 def clean_url(url: str) -> str:
     if not url: return ""
@@ -114,30 +113,26 @@ def load_cached_state():
     arts, meta, pw = [], {}, os.environ.get("PAGE_PASSWORD", "")
     force = os.environ.get("FORCE_REFRESH", "").lower() in ("true", "1")
     raw = ""
-    for path, remote in [("public/data.json", REMOTE_DATA_URL), ("cache_meta.json", REMOTE_META_URL)]:
-        if path == "public/data.json":
-            if os.path.exists(path):
-                try: raw = open(path, "r", encoding="utf-8").read().strip()
-                except Exception: pass
-            elif remote and not force:
+
+    if os.path.exists("public/data.json"):
+        try: raw = open("public/data.json", "r", encoding="utf-8").read().strip()
+        except Exception: pass
+    elif REMOTE_DATA_URL and not force:
+        try:
+            r = session.get(REMOTE_DATA_URL, timeout=(3.05, 4.0))
+            if r.ok: raw = r.text.strip()
+        except Exception: pass
+
+    if raw and raw != "[]":
+        try: arts = json.loads(decrypt_payload(raw, pw) if pw else raw)
+        except Exception: pass
+
+    if not force:
+        for p in ("public/cache_meta.json", "cache_meta.json"):
+            if os.path.exists(p):
                 try:
-                    r = session.get(remote, timeout=(3.05, 4.5))
-                    if r.ok: raw = r.text.strip()
-                except Exception: pass
-            if raw and raw != "[]":
-                try: arts = json.loads(decrypt_payload(raw, pw) if pw else raw)
-                except Exception: pass
-        elif not force:
-            if os.path.exists(path):
-                try: meta = json.load(open(path, "r", encoding="utf-8"))
-                except Exception: pass
-            elif os.path.exists(f"public/{path}"):
-                try: meta = json.load(open(f"public/{path}", "r", encoding="utf-8"))
-                except Exception: pass
-            elif remote:
-                try:
-                    r = session.get(remote, timeout=(3.05, 3.5))
-                    if r.ok: meta = r.json()
+                    meta = json.load(open(p, "r", encoding="utf-8"))
+                    break
                 except Exception: pass
 
     for a in arts:
@@ -159,7 +154,7 @@ def fetch_all_feeds(feeds, cache_meta):
         try:
             p = urllib.parse.urlsplit(url)
             if p.scheme and p.netloc: headers["Referer"] = f"{p.scheme}://{p.netloc}/"
-            r = session.get(url, headers=headers, timeout=(3.05, 5.5))
+            r = session.get(url, headers=headers, timeout=(3.05, 5.0))
             if r.status_code == 304: return [], {"title": f["title"], "status": "ok", "code": 304}
             if not r.ok: return [], {"title": f["title"], "status": "error", "code": r.status_code}
 
@@ -201,7 +196,7 @@ def fetch_all_feeds(feeds, cache_meta):
             health.append(h)
     return all_items, new_meta, health
 
-# --- Deduplizierung ---
+# --- Schnelle Deduplizierung mit Pre-Caching ---
 def extract_features(title: str):
     words = re.sub(r"[^\w\s\.]", " ", title.lower()).split()
     nums = {w for w in words if any(c.isdigit() for c in w) and len(w) >= 2}
@@ -215,17 +210,26 @@ def is_dup(t_a: str, t_b: str, feat_a, feat_b) -> bool:
     sub = {wa[:5] for wa in kw_a for wb in kw_b if len(wa) >= 5 and len(wb) >= 5 and wa[:5] == wb[:5]}
     min_len = min(len(kw_a), len(kw_b))
     if min_len >= 3 and (len(kw_a & kw_b | sub) / min_len) >= DEDUP_OVERLAP: return True
-    if (kw_a & kw_b or sub) and min(len(t_a), len(t_b)) / max(len(t_a), len(t_b)) >= 0.65:
-        return SequenceMatcher(None, t_a.lower(), t_b.lower()).ratio() >= DEDUP_RATIO
+    if (kw_a & kw_b or sub) and (min(len(t_a), len(t_b)) / max(len(t_a), len(t_b)) >= 0.65):
+        return SequenceMatcher(None, t_a.lower(), t_b.lower()).quick_ratio() >= DEDUP_RATIO
     return False
 
 def consolidate_articles(articles: list[dict]) -> list[dict]:
     sorted_arts = sorted(articles, key=lambda x: x.get("priority", DEFAULT_PRIO), reverse=True)
     res, feats, max_diff = [], [], MAX_DEDUP_HOURS * 3600
+
     for item in sorted_arts:
-        feat, ts = extract_features(item["title"]), item.get("_ts", 0)
-        match = next((ex for i, ex in enumerate(res)
-                      if not (ts and ex.get("_ts") and abs(ts - ex["_ts"]) > max_diff) and is_dup(item["title"], ex["title"], feat, feats[i])), None)
+        feat = extract_features(item["title"])
+        ts = item.get("_ts", 0)
+        match = None
+        for i, ex in enumerate(res):
+            ex_ts = ex.get("_ts", 0)
+            if ts and ex_ts and abs(ts - ex_ts) > max_diff:
+                continue
+            if is_dup(item["title"], ex["title"], feat, feats[i]):
+                match = ex
+                break
+
         if match:
             src = item.get("source")
             others = match.setdefault("other_sources", [])
@@ -261,7 +265,7 @@ def summarize_delta_with_gemini(items):
 
     def _call(chunk):
         payload = [{"id": i, "original_title": a["title"], "source": a["source"], "raw_text": a["summary"], "has_image": bool(a.get("image"))} for i, a in enumerate(chunk)]
-        prompt = f"Chefredakteur Tech-News:\n1. 'german_title': Auf Deutsch übersetzen (Kein Clickbait, keine Entities).\n2. 'summary': Genau 1 deutscher Satz mit **fett**.\n3. 'use_image': True nur bei echten Hardware-Fotos/Screenshots.\nArtikel:\n{json.dumps(payload, ensure_ascii=False)}"
+        prompt = f"Chefredakteur Tech-News:\n1. 'german_title': Auf Deutsch übersetzen (Kein Clickbait).\n2. 'summary': Genau 1 deutscher Satz mit **fett**.\n3. 'use_image': True nur bei echten Hardware-Fotos.\nArtikel:\n{json.dumps(payload, ensure_ascii=False)}"
         for attempt in range(3):
             try:
                 res = client.models.generate_content(
@@ -282,7 +286,7 @@ def summarize_delta_with_gemini(items):
                         })
                 return out
             except Exception as err:
-                time.sleep(18 + (attempt * 5) if ("429" in str(err) or "RESOURCE_EXHAUSTED" in str(err)) else 2 ** (attempt + 1))
+                time.sleep(15 + (attempt * 5) if ("429" in str(err) or "RESOURCE_EXHAUSTED" in str(err)) else 2 ** (attempt + 1))
         return [{"title": clean_text(o["title"]), "link": o["link"], "source": o["source"], "other_sources": o.get("other_sources", []),
                  "merged_details": o.get("merged_details", []), "summary": clean_text(o["summary"]), "image": o["image"],
                  "published": o["published"], "_ts": o.get("_ts", 0)} for o in chunk]
@@ -293,7 +297,7 @@ def summarize_delta_with_gemini(items):
         for r in ex.map(_call, chunks): res.extend(r)
     return res
 
-# --- Unified Frontend Template ---
+# --- Frontend Template ---
 PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="de" data-theme="dark">
 <head>
@@ -458,23 +462,26 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   <script>
     window.IS_ARCHIVE = __IS_ARCHIVE__;
     const configuredSources = __CONFIGURED_SOURCES__, feedHealth = __HEALTH_DATA__, buildTime = "__NOW_STR__";
-    let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, sIndex = -1, sTimer = null, toastTimer = null, pollInterval = null;
+    let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, sTimer = null, toastTimer = null, pollInterval = null;
 
     if('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 
     const hStr = s => { let h = 0; for(let i=0;i<(s||'').length;i++){ h = ((h<<5)-h)+s.charCodeAt(i); h |= 0; } return Math.abs(h); };
+    
+    // Schnelle Zeitangabe ohne schwere Intl-Instanziierungen
     const relTime = d => {
       if(!d) return ''; const diff = Math.floor((Date.now() - new Date(d))/1000);
       return isNaN(diff)?'':diff<60?'gerade':diff<3600?`vor ${Math.floor(diff/60)}m`:diff<86400?`vor ${Math.floor(diff/3600)}h`:`vor ${Math.floor(diff/86400)}d`;
     };
 
+    function pad2(n){ return n < 10 ? '0' + n : n; }
     function getDisplayTime(articles) {
       if (!articles || !articles.length) return buildTime;
-      const latestTs = articles.reduce((max, a) => Math.max(max, a._ts || 0), 0);
-      if (!latestTs) return buildTime;
-      const d = new Date(latestTs * 1000);
-      return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' +
-             d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+      let maxTs = 0;
+      for (let i = 0; i < articles.length; i++) { if (articles[i]._ts > maxTs) maxTs = articles[i]._ts; }
+      if (!maxTs) return buildTime;
+      const d = new Date(maxTs * 1000);
+      return `${pad2(d.getDate())}.${pad2(d.getMonth()+1)}.${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
     }
 
     function initTheme(){ document.documentElement.setAttribute('data-theme', localStorage.getItem('hub_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')); }
@@ -500,8 +507,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     async function shareArticle(title, url){
       if(navigator.share){ try { await navigator.share({ title: title, url: url }); } catch(e){} }
       else {
-        try { await navigator.clipboard.writeText(url); showToast('📋 Link in die Zwischenablage kopiert!', 2500); }
-        catch(e){ showToast('Kopieren fehlgeschlagen.', 2500); }
+        try { await navigator.clipboard.writeText(url); showToast('📋 Link kopiert!', 2000); }
+        catch(e){}
       }
     }
 
@@ -543,7 +550,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       toOpen.forEach(a => { const id = String(hStr(a.link||'')); if(!r.includes(id)) r.push(id); });
       setStorage('read_news', r); setStorage('bookmarked_news', []);
       document.querySelectorAll('.feed-card.bookmarked').forEach(c => { c.classList.remove('bookmarked'); c.classList.add('read'); });
-      updateBookmarkCount(); showToast(`🚀 ${toOpen.length} Artikel geöffnet und als gelesen markiert.`, 4000); toggleSavedFilter();
+      updateBookmarkCount(); showToast(`🚀 ${toOpen.length} Artikel geöffnet.`, 3000); toggleSavedFilter();
     }
 
     function toggleRead(id){
@@ -559,25 +566,13 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       setStorage('read_news', r);
     }
 
-    function attachSwipeHandler(card, title, link, id){
-      let touchStartX = 0, touchStartY = 0;
-      card.addEventListener('touchstart', e => { touchStartX = e.changedTouches[0].screenX; touchStartY = e.changedTouches[0].screenY; }, {passive:true});
-      card.addEventListener('touchmove', e => {
-        const diffX = e.changedTouches[0].screenX - touchStartX, diffY = e.changedTouches[0].screenY - touchStartY;
-        if(Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 100) card.style.transform = `translateX(${diffX * 0.4}px)`;
-      }, {passive:true});
-      card.addEventListener('touchend', e => {
-        card.style.transform = '';
-        const diffX = e.changedTouches[0].screenX - touchStartX, diffY = e.changedTouches[0].screenY - touchStartY;
-        if(Math.abs(diffX) > 65 && Math.abs(diffX) > Math.abs(diffY) * 1.5){
-          if(diffX > 0) shareArticle(title, link); else toggleBookmark(id);
-        }
-      }, {passive:true});
-    }
-
     function renderUI(articles){
       let totalDups = 0; counts = {};
-      articles.forEach(a => { totalDups += (a.other_sources||[]).length; counts[a.source||"Unbekannt"] = (counts[a.source||"Unbekannt"]||0) + 1; });
+      for(let i = 0; i < articles.length; i++) {
+        const a = articles[i];
+        totalDups += (a.other_sources||[]).length;
+        counts[a.source||"Unbekannt"] = (counts[a.source||"Unbekannt"]||0) + 1;
+      }
       const tEl = document.getElementById('current-title');
       const dTime = getDisplayTime(articles);
       if(tEl && !onlySaved) tEl.textContent = window.IS_ARCHIVE ? `Archiv: ${articles.length} News bis ${dTime}` : `${articles.length} News bis ${dTime}`;
@@ -595,18 +590,20 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
       const cont = document.getElementById('articles-container');
       if(cont) {
-        cont.innerHTML = articles.map(a => {
+        let htmlBuf = '';
+        for(let i = 0; i < articles.length; i++) {
+          const a = articles[i];
           const id = hStr(a.link||''), oth = (a.other_sources&&a.other_sources.length)?`<span class="feed-others">• Auch bei: ${a.other_sources.join(", ")}</span>`:'';
           const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" onerror="this.remove()">` : '';
-          let cls = (rList.includes(String(id))?' read':'') + (sList.includes(String(id))?' seen':'') + (bList.includes(String(id))?' bookmarked':'');
+          const cls = (rList.includes(String(id))?' read':'') + (sList.includes(String(id))?' seen':'') + (bList.includes(String(id))?' bookmarked':'');
 
-          return `<article class="feed-card${cls}" data-id="${id}" data-link="${a.link||''}" data-title="${a.title||''}" data-sources="${[a.source||'',...(a.other_sources||[])].join(';;;')}">
+          htmlBuf += `<article class="feed-card${cls}" data-id="${id}" data-link="${a.link||''}" data-title="${a.title||''}" data-sources="${[a.source||'',...(a.other_sources||[])].join(';;;')}">
             <div class="feed-content">
               <div class="feed-meta">
-                <button class="action-icon-btn bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Für später merken">🔖</button>
-                <button class="action-icon-btn" onclick="event.stopPropagation();shareArticle('${a.title||''}', '${a.link||''}')" title="Artikel teilen">📤</button>
+                <button class="action-icon-btn bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Merken">🔖</button>
+                <button class="action-icon-btn" onclick="event.stopPropagation();shareArticle('${a.title||''}', '${a.link||''}')" title="Teilen">📤</button>
                 <span class="feed-source">${a.source||'Quelle'}</span>
-                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Gelesen / Ungelesen"><span class="unread-dot"></span></button>
+                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Gelesen"><span class="unread-dot"></span></button>
                 <span class="feed-time">${relTime(a.published)}</span>
                 ${oth}
               </div>
@@ -614,9 +611,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
               <p class="feed-summary">${a.summary||''}</p>
             </div>${img}
           </article>`;
-        }).join('');
-
-        cont.querySelectorAll('.feed-card').forEach(c => attachSwipeHandler(c, c.dataset.title, c.dataset.link, c.dataset.id));
+        }
+        cont.innerHTML = htmlBuf;
       }
     }
 
@@ -649,7 +645,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if(t && !onlySaved) t.textContent = (src==='all')?(window.IS_ARCHIVE?`Archiv: ${liveArticles.length} News bis ${dTime}`:`${liveArticles.length} News bis ${dTime}`):`${src} (${counts[src]||0}) bis ${dTime}`;
       applyFilters(); if(window.innerWidth<=768) toggleSidebar();
     }
-    function filterSearch(q){ clearTimeout(sTimer); sTimer = setTimeout(()=>{ searchQuery = q.toLowerCase().trim(); applyFilters(); }, 120); }
+    function filterSearch(q){ clearTimeout(sTimer); sTimer = setTimeout(()=>{ searchQuery = q.toLowerCase().trim(); applyFilters(); }, 100); }
     function applyFilters(){
       const bList = getStorage('bookmarked_news');
       document.querySelectorAll('.feed-card').forEach(c => {
@@ -689,7 +685,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           showToast('<a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" class="toast-link"><span class="spin">⏳</span> GitHub Action läuft... ↗</a>', 0);
           startWorkflowPolling(tk, startTime);
         } else {
-          showToast(`⚠️ Fehler (${r.status}). <a href="#" onclick="localStorage.removeItem('gh_token');triggerWorkflow();return false;">Token neu eingeben</a>`, 8000);
+          showToast(`⚠️ Fehler (${r.status}). <a href="#" onclick="localStorage.removeItem('gh_token');triggerWorkflow();return false;">Token neu</a>`, 8000);
         }
       } catch(e){ showToast('❌ Netzwerkfehler: ' + e.message, 6000); }
     }
@@ -712,12 +708,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
               clearInterval(pollInterval);
               if(run.conclusion === 'success'){
                 showToast(`<a href="${runUrl}" target="_blank" rel="noopener" class="toast-link">🎉 Update fertig! Aktualisiere... ↗</a>`, 0);
-                setTimeout(() => reloadDataSilent(), 2500);
+                setTimeout(() => reloadDataSilent(), 2000);
               } else { showToast(`❌ Fehlgeschlagen (${run.conclusion}). <a href="${runUrl}" target="_blank" rel="noopener">Log ↗</a>`, 9000); }
             }
           }
         } catch(e) {}
-      }, 5500);
+      }, 5000);
     }
 
     async function reloadDataSilent(){
@@ -726,7 +722,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         if(!r.ok) throw new Error();
         rawData = await r.text();
         const parsed = parsePayload(localStorage.getItem('hub_key')||"");
-        if(parsed) { globalArticles = parsed; onLoaded(); showToast('✅ Feeds aktualisiert!', 4000); }
+        if(parsed) { globalArticles = parsed; onLoaded(); showToast('✅ Feeds aktualisiert!', 3500); }
         else { location.reload(); }
       } catch(e){ location.reload(); }
     }
@@ -744,6 +740,38 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     async function init(){
       initTheme();
       if(window.innerWidth>768 && localStorage.getItem('sidebar_closed')==='true') document.getElementById('sidebar').classList.add('collapsed');
+      
+      // Global Event Delegation für Touch-Swipe (extrem performant)
+      let touchStartX = 0, touchStartY = 0, touchTargetCard = null;
+      const container = document.getElementById('articles-container');
+      container.addEventListener('touchstart', e => {
+        touchTargetCard = e.target.closest('.feed-card');
+        if(!touchTargetCard) return;
+        touchStartX = e.changedTouches[0].screenX;
+        touchStartY = e.changedTouches[0].screenY;
+      }, {passive:true});
+
+      container.addEventListener('touchmove', e => {
+        if(!touchTargetCard) return;
+        const diffX = e.changedTouches[0].screenX - touchStartX;
+        const diffY = e.changedTouches[0].screenY - touchStartY;
+        if(Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 100){
+          touchTargetCard.style.transform = `translateX(${diffX * 0.35}px)`;
+        }
+      }, {passive:true});
+
+      container.addEventListener('touchend', e => {
+        if(!touchTargetCard) return;
+        touchTargetCard.style.transform = '';
+        const diffX = e.changedTouches[0].screenX - touchStartX;
+        const diffY = e.changedTouches[0].screenY - touchStartY;
+        if(Math.abs(diffX) > 60 && Math.abs(diffX) > Math.abs(diffY) * 1.4){
+          if(diffX > 0) shareArticle(touchTargetCard.dataset.title, touchTargetCard.dataset.link);
+          else toggleBookmark(touchTargetCard.dataset.id);
+        }
+        touchTargetCard = null;
+      }, {passive:true});
+
       try {
         const r = await fetch('data.json?t=' + Date.now(), {cache:'no-store'}).catch(() => fetch('data.json'));
         if(!r.ok) throw new Error(r.status);
@@ -819,14 +847,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     document.addEventListener('keydown', e => {
       if(document.activeElement === document.getElementById('search-box')) return;
-      const vis = Array.from(document.querySelectorAll('.feed-card')).filter(c => c.style.display !== 'none');
       if(e.key==='[') toggleSidebar();
-      if(e.key==='j' && vis.length){ sIndex = Math.min(sIndex+1, vis.length-1); vis[sIndex].scrollIntoView({behavior:'smooth',block:'nearest'}); }
-      if(e.key==='k' && vis.length){ sIndex = Math.max(sIndex-1, 0); vis[sIndex].scrollIntoView({behavior:'smooth',block:'nearest'}); }
-      if(e.key==='o' && sIndex>=0) window.open(vis[sIndex].querySelector('.feed-title').href, '_blank');
-      if(e.key==='m' && sIndex>=0) toggleRead(vis[sIndex].dataset.id);
-      if(e.key==='b' && sIndex>=0) toggleBookmark(vis[sIndex].dataset.id);
-      if(e.key==='s' && sIndex>=0) shareArticle(vis[sIndex].dataset.title, vis[sIndex].dataset.link);
       if(e.key==='/'){ e.preventDefault(); document.getElementById('search-box').focus(); }
       if(e.key==='Escape'){ toggleModal('health-modal',false); toggleModal('dup-modal',false); hideToast(); }
     });
@@ -837,36 +858,14 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-# --- Service Worker Script (Network-First für HTML & Data) ---
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v4';
-const ASSETS = [
-  './manifest.json',
-  'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
-  'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'
-];
-
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS)));
-  self.skipWaiting();
-});
-
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))
-  );
-  self.clients.claim();
-});
-
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v5';
+const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
+self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
+self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
 self.addEventListener('fetch', e => {
   const url = e.request.url;
   if (url.includes('data.json') || e.request.mode === 'navigate' || url.endsWith('.html')) {
-    e.respondWith(
-      fetch(e.request).then(res => {
-        const cl = res.clone();
-        caches.open(CACHE_NAME).then(c => c.put(e.request, cl));
-        return res;
-      }).catch(() => caches.match(e.request))
-    );
+    e.respondWith(fetch(e.request).then(res => { const cl = res.clone(); caches.open(CACHE_NAME).then(c => c.put(e.request, cl)); return res; }).catch(() => caches.match(e.request)));
     return;
   }
   e.respondWith(caches.match(e.request).then(cached => cached || fetch(e.request)));
@@ -908,8 +907,8 @@ if __name__ == "__main__":
 
     raw_items, new_meta, feed_health = fetch_all_feeds(feeds, meta)
 
-    for p in ("cache_meta.json", "public/cache_meta.json"):
-        with open(p, "w", encoding="utf-8") as f: json.dump(new_meta, f, separators=(',', ':'))
+    with open("public/cache_meta.json", "w", encoding="utf-8") as f:
+        json.dump(new_meta, f, separators=(',', ':'))
 
     new_items = []
     for r in raw_items:
@@ -927,14 +926,15 @@ if __name__ == "__main__":
 
     frontend_data = [{
         "title": a["title"], "link": a["link"], "source": a["source"], "summary": a["summary"],
-        "published": a.get("published"), **({"image": a["image"]} if a.get("image") else {}),
+        "published": a.get("published"), "_ts": a.get("_ts", 0),
+        **({"image": a["image"]} if a.get("image") else {}),
         **({"other_sources": a["other_sources"]} if a.get("other_sources") else {}),
         **({"merged_details": a["merged_details"]} if a.get("merged_details") else {})
     } for a in final]
 
     if "GITHUB_OUTPUT" in os.environ:
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as gh:
-            gh.write(f"deploy={'true' if bool(bundled) or len(cached) != len(final) else 'false'}\n")
+            gh.write("deploy=true\n")
 
     json_payload = json.dumps(frontend_data, ensure_ascii=False, separators=(',', ':'))
     with open("public/data.json", "w", encoding="utf-8") as f: f.write(encrypt_payload(json_payload, pw) if pw else json_payload)
