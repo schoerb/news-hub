@@ -30,7 +30,7 @@ STOPWORDS = {
     "the", "a", "an", "and", "or", "to", "for", "of", "with", "by", "from", "is", "are", "new", "out"
 }
 
-# --- Connection Pool mit GZIP/Brotli Unterstützung ---
+# --- Connection Pool ---
 session = requests.Session()
 adapter = HTTPAdapter(pool_connections=25, pool_maxsize=25, max_retries=Retry(total=2, backoff_factor=0.2))
 session.mount("https://", adapter)
@@ -201,7 +201,7 @@ def fetch_all_feeds(feeds, cache_meta):
             health.append(h)
     return all_items, new_meta, health
 
-# --- Schnelle Deduplizierung ---
+# --- Deduplizierung ---
 def extract_features(title: str):
     words = re.sub(r"[^\w\s\.]", " ", title.lower()).split()
     nums = {w for w in words if any(c.isdigit() for c in w) and len(w) >= 2}
@@ -293,7 +293,7 @@ def summarize_delta_with_gemini(items):
         for r in ex.map(_call, chunks): res.extend(r)
     return res
 
-# --- Kompaktes Unified Frontend Template ---
+# --- Unified Frontend Template ---
 PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="de" data-theme="dark">
 <head>
@@ -825,15 +825,42 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v2';
-const ASSETS = ['./', './index.html', './archive.html', './manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
-self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
-self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
+# --- Service Worker Script (Network-First für HTML & Data) ---
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v3';
+const ASSETS = [
+  './manifest.json',
+  'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
+  'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'
+];
+
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS)));
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))
+  );
+  self.clients.claim();
+});
+
 self.addEventListener('fetch', e => {
-  if(e.request.url.includes('data.json')){
-    e.respondWith(fetch(e.request).then(res => { const cl = res.clone(); caches.open(CACHE_NAME).then(c => c.put(e.request, cl)); return res; }).catch(() => caches.match(e.request)));
+  const url = e.request.url;
+
+  // HTML-Navigationen und data.json: IMMER Network-First (frische Version vom Server)
+  if (url.includes('data.json') || e.request.mode === 'navigate' || url.endsWith('.html')) {
+    e.respondWith(
+      fetch(e.request).then(res => {
+        const cl = res.clone();
+        caches.open(CACHE_NAME).then(c => c.put(e.request, cl));
+        return res;
+      }).catch(() => caches.match(e.request))
+    );
     return;
   }
+
+  // Statische Assets (Fonts, Libs): Cache-First mit Network-Fallback
   e.respondWith(caches.match(e.request).then(cached => cached || fetch(e.request)));
 });
 """
