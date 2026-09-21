@@ -1,4 +1,4 @@
-const CACHE_NAME = 'news-hub-v3';
+const CACHE_NAME = 'news-hub-v4';
 const ASSETS = [
   './manifest.json',
   'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
@@ -19,8 +19,6 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const url = e.request.url;
-
-  // HTML-Navigationen und data.json: IMMER Network-First (frische Version vom Server)
   if (url.includes('data.json') || e.request.mode === 'navigate' || url.endsWith('.html')) {
     e.respondWith(
       fetch(e.request).then(res => {
@@ -31,7 +29,5 @@ self.addEventListener('fetch', e => {
     );
     return;
   }
-
-  // Statische Assets (Fonts, Libs): Cache-First mit Network-Fallback
   e.respondWith(caches.match(e.request).then(cached => cached || fetch(e.request)));
 });
