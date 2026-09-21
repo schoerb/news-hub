@@ -468,6 +468,15 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       return isNaN(diff)?'':diff<60?'gerade':diff<3600?`vor ${Math.floor(diff/60)}m`:diff<86400?`vor ${Math.floor(diff/3600)}h`:`vor ${Math.floor(diff/86400)}d`;
     };
 
+    function getDisplayTime(articles) {
+      if (!articles || !articles.length) return buildTime;
+      const latestTs = articles.reduce((max, a) => Math.max(max, a._ts || 0), 0);
+      if (!latestTs) return buildTime;
+      const d = new Date(latestTs * 1000);
+      return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' +
+             d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    }
+
     function initTheme(){ document.documentElement.setAttribute('data-theme', localStorage.getItem('hub_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')); }
     function toggleTheme(){ const t = document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark'; document.documentElement.setAttribute('data-theme',t); localStorage.setItem('hub_theme',t); }
     function toggleSidebar(){
@@ -520,7 +529,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if(btn) btn.classList.toggle('active', onlySaved);
       updateBookmarkCount(); applyFilters();
       const t = document.getElementById('current-title');
-      if(t) t.textContent = onlySaved ? `🔖 ${getStorage('bookmarked_news').length} Gemerkte News` : (window.IS_ARCHIVE ? `Archiv: ${liveArticles.length} News bis ${buildTime}` : `${liveArticles.length} News bis ${buildTime}`);
+      const dTime = getDisplayTime(liveArticles);
+      if(t) t.textContent = onlySaved ? `🔖 ${getStorage('bookmarked_news').length} Gemerkte News` : (window.IS_ARCHIVE ? `Archiv: ${liveArticles.length} News bis ${dTime}` : `${liveArticles.length} News bis ${dTime}`);
     }
 
     function openAllBookmarked(){
@@ -569,7 +579,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       let totalDups = 0; counts = {};
       articles.forEach(a => { totalDups += (a.other_sources||[]).length; counts[a.source||"Unbekannt"] = (counts[a.source||"Unbekannt"]||0) + 1; });
       const tEl = document.getElementById('current-title');
-      if(tEl && !onlySaved) tEl.textContent = window.IS_ARCHIVE ? `Archiv: ${articles.length} News bis ${buildTime}` : `${articles.length} News bis ${buildTime}`;
+      const dTime = getDisplayTime(articles);
+      if(tEl && !onlySaved) tEl.textContent = window.IS_ARCHIVE ? `Archiv: ${articles.length} News bis ${dTime}` : `${articles.length} News bis ${dTime}`;
       const dEl = document.getElementById('header-dup-info'); if(dEl) dEl.innerHTML = `🧹 ${totalDups} Duplikate`;
 
       const sorted = Array.from(new Set([...configuredSources, ...Object.keys(counts)])).sort((a,b)=>(counts[b]||0)-(counts[a]||0));
@@ -634,7 +645,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       activeSource = src; document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
       if(btn) btn.classList.add('active');
       const t = document.getElementById('current-title');
-      if(t && !onlySaved) t.textContent = (src==='all')?(window.IS_ARCHIVE?`Archiv: ${liveArticles.length} News bis ${buildTime}`:`${liveArticles.length} News bis ${buildTime}`):`${src} (${counts[src]||0}) bis ${buildTime}`;
+      const dTime = getDisplayTime(liveArticles);
+      if(t && !onlySaved) t.textContent = (src==='all')?(window.IS_ARCHIVE?`Archiv: ${liveArticles.length} News bis ${dTime}`:`${liveArticles.length} News bis ${dTime}`):`${src} (${counts[src]||0}) bis ${dTime}`;
       applyFilters(); if(window.innerWidth<=768) toggleSidebar();
     }
     function filterSearch(q){ clearTimeout(sTimer); sTimer = setTimeout(()=>{ searchQuery = q.toLowerCase().trim(); applyFilters(); }, 120); }
@@ -826,7 +838,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 """
 
 # --- Service Worker Script (Network-First für HTML & Data) ---
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v3';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v4';
 const ASSETS = [
   './manifest.json',
   'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
@@ -847,8 +859,6 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const url = e.request.url;
-
-  // HTML-Navigationen und data.json: IMMER Network-First (frische Version vom Server)
   if (url.includes('data.json') || e.request.mode === 'navigate' || url.endsWith('.html')) {
     e.respondWith(
       fetch(e.request).then(res => {
@@ -859,8 +869,6 @@ self.addEventListener('fetch', e => {
     );
     return;
   }
-
-  // Statische Assets (Fonts, Libs): Cache-First mit Network-Fallback
   e.respondWith(caches.match(e.request).then(cached => cached || fetch(e.request)));
 });
 """
@@ -872,7 +880,7 @@ APP_MANIFEST = {
 }
 
 def render_page(feed_health, feeds, is_archive=False):
-    now_str = datetime.datetime.now(BERLIN_TZ).strftime("%d.%m.%Y %H:%M")
+    now_str = datetime.datetime.now(datetime.timezone.utc).astimezone(BERLIN_TZ).strftime("%d.%m.%Y %H:%M")
     ok = sum(1 for h in feed_health if h["status"] == "ok" or h["code"] in (200, 304))
     failed = len(feed_health) - ok
     h_text = f'<span style="color:#eab308;cursor:pointer" onclick="toggleModal(\'health-modal\',true)">🟡 {ok}/{len(feed_health)} Feeds ({failed} gestört)</span>' if failed > 0 else f'<span class="meta-clickable" onclick="toggleModal(\'health-modal\',true)">🟢 {ok}/{len(feed_health)} Feeds online</span>'
