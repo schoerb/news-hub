@@ -1,15 +1,26 @@
-import base64, datetime, hashlib, html, json, os, re, time, urllib.parse, warnings
-import xml.etree.ElementTree as ET, zoneinfo
+import base64
+import datetime
+import hashlib
+import html
+import json
+import os
+import re
+import time
+import urllib.parse
+import warnings
+import xml.etree.ElementTree as ET
+import zoneinfo
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 
 warnings.filterwarnings("ignore", category=UserWarning, module="google.genai")
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-import feedparser, requests
+import feedparser
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
+import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
@@ -41,16 +52,21 @@ session.headers.update({
     "Accept-Encoding": "gzip, deflate",
 })
 
+
 def clean_text(s: str) -> str:
-    if not s: return ""
+    if not s:
+        return ""
     return " ".join(html.unescape(html.unescape(re.sub(r"<[^>]+>", " ", s))).split()).strip()
 
+
 def clean_url(url: str) -> str:
-    if not url: return ""
+    if not url:
+        return ""
     p = urllib.parse.urlsplit(url)
     q = [(k, v) for k, v in urllib.parse.parse_qsl(p.query, keep_blank_values=True)
          if not (k.startswith("utm_") or k in ("wt_mc", "fbclid", "ref", "source"))]
     return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path, urllib.parse.urlencode(q), p.fragment))
+
 
 # --- Krypto ---
 def openssl_kdf(pw: bytes, salt: bytes, klen=32, ivlen=16) -> tuple[bytes, bytes]:
@@ -59,55 +75,75 @@ def openssl_kdf(pw: bytes, salt: bytes, klen=32, ivlen=16) -> tuple[bytes, bytes
         d += hashlib.md5(d[-16:] + pw + salt if d else pw + salt).digest()
     return d[:klen], d[klen:klen + ivlen]
 
+
 def encrypt_payload(data: str, pw: str) -> str:
-    if not pw: return data
+    if not pw:
+        return data
     salt = os.urandom(8)
     key, iv = openssl_kdf(pw.encode(), salt)
     pad = 16 - (len(data.encode()) % 16)
     c = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
     return base64.b64encode(b"Salted__" + salt + c.update(data.encode() + bytes([pad] * pad)) + c.finalize()).decode()
 
+
 def decrypt_payload(enc: str, pw: str) -> str:
-    if not pw: return enc
+    if not pw:
+        return enc
     try:
         raw = base64.b64decode(enc)
-        if not raw.startswith(b"Salted__"): return enc
+        if not raw.startswith(b"Salted__"):
+            return enc
         key, iv = openssl_kdf(pw.encode(), raw[8:16])
         c = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
         d = c.update(raw[16:]) + c.finalize()
         return d[:-d[-1]].decode("utf-8")
-    except Exception: return ""
+    except Exception:
+        return ""
+
 
 def hash_feed(url: str) -> str:
     return hashlib.sha256((url + os.environ.get("PAGE_PASSWORD", "static_news_salt")).encode()).hexdigest()[:16]
+
 
 # --- Feed Parsing ---
 def parse_opml():
     raw = os.environ.get("FEEDS_OPML", "").strip()
     prios = json.loads(os.environ.get("FEED_PRIORITIES", "{}"))
-    try: tree = ET.fromstring(raw) if raw else (ET.parse("feeds.opml").getroot() if os.path.exists("feeds.opml") else None)
-    except Exception: return []
-    if tree is None: return []
+    try:
+        tree = ET.fromstring(raw) if raw else (ET.parse("feeds.opml").getroot() if os.path.exists("feeds.opml") else None)
+    except Exception:
+        return []
+    if tree is None:
+        return []
     return [{"title": (n.get("text") or n.get("title") or "Feed").strip(), "url": n.get("xmlUrl", "").strip(),
              "priority": int(n.get("priority")) if n.get("priority", "").isdigit() else prios.get(n.get("text", "").strip(), DEFAULT_PRIO)}
             for n in tree.findall(".//outline[@xmlUrl]") if n.get("xmlUrl", "").strip()]
+
 
 def extract_image(e):
     for k in ("media_content", "media_thumbnail"):
         if e.get(k):
             u = e[k][0].get("url")
-            if u and not any(b in u.lower() for b in ["favicon", "avatar", "logo", "tracking", "1x1"]): return u
+            if u and not any(b in u.lower() for b in ["favicon", "avatar", "logo", "tracking", "1x1"]):
+                return u
     for enc in e.get("enclosures", []):
-        if enc.get("type", "").startswith("image/") and enc.get("href"): return enc.get("href")
+        if enc.get("type", "").startswith("image/") and enc.get("href"):
+            return enc.get("href")
     c = e.get("summary", "") + (e.content[0].get("value", "") if "content" in e and e.content else "")
     m = re.search(r'<img[^>]+src=["\']?([^\s"\'<>]+\.(?:jpg|jpeg|png|webp))', c, re.I)
     return m.group(1) if m and not any(b in m.group(1).lower() for b in ["favicon", "pixel", "1x1"]) else None
 
+
 def parse_ts(val) -> int:
-    if isinstance(val, (int, float)): return int(val)
-    if not val: return 0
-    try: return int(datetime.datetime.fromisoformat(str(val).replace("Z", "+00:00")).timestamp())
-    except Exception: return 0
+    if isinstance(val, (int, float)):
+        return int(val)
+    if not val:
+        return 0
+    try:
+        return int(datetime.datetime.fromisoformat(str(val).replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return 0
+
 
 def load_cached_state():
     arts, meta, pw = [], {}, os.environ.get("PAGE_PASSWORD", "")
@@ -115,17 +151,23 @@ def load_cached_state():
     raw = ""
 
     if os.path.exists("public/data.json"):
-        try: raw = open("public/data.json", "r", encoding="utf-8").read().strip()
-        except Exception: pass
+        try:
+            raw = open("public/data.json", "r", encoding="utf-8").read().strip()
+        except Exception:
+            pass
     elif REMOTE_DATA_URL and not force:
         try:
             r = session.get(REMOTE_DATA_URL, timeout=(3.05, 4.0))
-            if r.ok: raw = r.text.strip()
-        except Exception: pass
+            if r.ok:
+                raw = r.text.strip()
+        except Exception:
+            pass
 
     if raw and raw != "[]":
-        try: arts = json.loads(decrypt_payload(raw, pw) if pw else raw)
-        except Exception: pass
+        try:
+            arts = json.loads(decrypt_payload(raw, pw) if pw else raw)
+        except Exception:
+            pass
 
     if not force:
         for p in ("public/cache_meta.json", "cache_meta.json"):
@@ -133,12 +175,14 @@ def load_cached_state():
                 try:
                     meta = json.load(open(p, "r", encoding="utf-8"))
                     break
-                except Exception: pass
+                except Exception:
+                    pass
 
     for a in arts:
         a["title"] = clean_text(a.get("title", ""))
         a["_ts"] = parse_ts(a.get("published"))
     return arts, meta
+
 
 def fetch_all_feeds(feeds, cache_meta):
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -149,22 +193,31 @@ def fetch_all_feeds(feeds, cache_meta):
         url, key = f["url"], hash_feed(f["url"])
         headers = {}
         if key in cache_meta:
-            if "etag" in cache_meta[key]: headers["If-None-Match"] = cache_meta[key]["etag"]
-            if "modified" in cache_meta[key]: headers["If-Modified-Since"] = cache_meta[key]["modified"]
+            if "etag" in cache_meta[key]:
+                headers["If-None-Match"] = cache_meta[key]["etag"]
+            if "modified" in cache_meta[key]:
+                headers["If-Modified-Since"] = cache_meta[key]["modified"]
         try:
             p = urllib.parse.urlsplit(url)
-            if p.scheme and p.netloc: headers["Referer"] = f"{p.scheme}://{p.netloc}/"
+            if p.scheme and p.netloc:
+                headers["Referer"] = f"{p.scheme}://{p.netloc}/"
             r = session.get(url, headers=headers, timeout=(3.05, 5.0))
-            if r.status_code == 304: return [], {"title": f["title"], "status": "ok", "code": 304}
-            if not r.ok: return [], {"title": f["title"], "status": "error", "code": r.status_code}
+            if r.status_code == 304:
+                return [], {"title": f["title"], "status": "ok", "code": 304}
+            if not r.ok:
+                return [], {"title": f["title"], "status": "error", "code": r.status_code}
 
             m = {}
-            if "etag" in r.headers: m["etag"] = r.headers["etag"]
-            if "last-modified" in r.headers: m["modified"] = r.headers["last-modified"]
-            if m: new_meta[key] = m
+            if "etag" in r.headers:
+                m["etag"] = r.headers["etag"]
+            if "last-modified" in r.headers:
+                m["modified"] = r.headers["last-modified"]
+            if m:
+                new_meta[key] = m
 
             parsed = feedparser.parse(r.content)
-            if parsed.bozo and not parsed.entries: return [], {"title": f["title"], "status": "parse_error", "code": r.status_code}
+            if parsed.bozo and not parsed.entries:
+                return [], {"title": f["title"], "status": "parse_error", "code": r.status_code}
 
             items = []
             for e in parsed.entries[:15]:
@@ -196,23 +249,28 @@ def fetch_all_feeds(feeds, cache_meta):
             health.append(h)
     return all_items, new_meta, health
 
-# --- Fast Deduplication ---
+
+# --- Deduplizierung ---
 def extract_features(title: str):
     words = re.sub(r"[^\w\s\.]", " ", title.lower()).split()
     nums = {w for w in words if any(c.isdigit() for c in w) and len(w) >= 2}
     kws = {w[:-2] if len(w) > 5 and w.endswith(("en", "er", "es")) else w for w in words if w not in STOPWORDS and len(w) > 2 and w not in nums}
     return kws, nums
 
+
 def is_dup(t_a: str, t_b: str, feat_a, feat_b) -> bool:
     kw_a, num_a = feat_a
     kw_b, num_b = feat_b
-    if (num_a & num_b) and len(kw_a & kw_b) >= 2: return True
+    if (num_a & num_b) and len(kw_a & kw_b) >= 2:
+        return True
     sub = {wa[:5] for wa in kw_a for wb in kw_b if len(wa) >= 5 and len(wb) >= 5 and wa[:5] == wb[:5]}
     min_len = min(len(kw_a), len(kw_b))
-    if min_len >= 3 and (len(kw_a & kw_b | sub) / min_len) >= DEDUP_OVERLAP: return True
+    if min_len >= 3 and (len(kw_a & kw_b | sub) / min_len) >= DEDUP_OVERLAP:
+        return True
     if (kw_a & kw_b or sub) and (min(len(t_a), len(t_b)) / max(len(t_a), len(t_b)) >= 0.65):
         return SequenceMatcher(None, t_a.lower(), t_b.lower()).quick_ratio() >= DEDUP_RATIO
     return False
+
 
 def consolidate_articles(articles: list[dict]) -> list[dict]:
     sorted_arts = sorted(articles, key=lambda x: x.get("priority", DEFAULT_PRIO), reverse=True)
@@ -233,9 +291,11 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
         if match:
             src = item.get("source")
             others = match.setdefault("other_sources", [])
-            if src and src != match.get("source") and src not in others: others.append(src)
+            if src and src != match.get("source") and src not in others:
+                others.append(src)
             for osrc in item.get("other_sources", []):
-                if osrc != match.get("source") and osrc not in others: others.append(osrc)
+                if osrc != match.get("source") and osrc not in others:
+                    others.append(osrc)
             match.setdefault("merged_details", []).append({
                 "source": src or "Unbekannt", "title": item.get("title", ""), "link": item.get("link", ""), "matched_with": match.get("title", "")
             })
@@ -248,6 +308,7 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
             feats.append(feat)
     return res
 
+
 # --- Gemini API ---
 class DeltaItem(BaseModel):
     id: int
@@ -255,12 +316,15 @@ class DeltaItem(BaseModel):
     summary: str = Field(description="Genau 1 deutscher Satz mit **fett** hervorgehobenen Begriffen.")
     use_image: bool = Field(default=False)
 
+
 class DeltaBatchResponse(BaseModel):
     items: list[DeltaItem]
 
+
 def summarize_delta_with_gemini(items):
     key = os.environ.get("GEMINI_API_KEY")
-    if not items or not key: return []
+    if not items or not key:
+        return []
     client = genai.Client(api_key=key)
 
     def _call(chunk):
@@ -294,8 +358,10 @@ def summarize_delta_with_gemini(items):
     chunks = [items[i:i + 35] for i in range(0, len(items), 35)]
     res = []
     with ThreadPoolExecutor(max_workers=3) as ex:
-        for r in ex.map(_call, chunks): res.extend(r)
+        for r in ex.map(_call, chunks):
+            res.extend(r)
     return res
+
 
 # --- Frontend Template ---
 PAGE_TEMPLATE = """<!DOCTYPE html>
@@ -312,7 +378,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     [data-theme="light"]{--bg:#f8fafc;--sidebar:#fff;--card:#fff;--hover:#f1f5f9;--border:#e2e8f0;--text:#1e293b;--muted:#64748b;--bold:#0f172a;--accent:#16a34a;--accent-dim:rgba(22,163,74,.12);--link:#2563eb}
     *{box-sizing:border-box;margin:0;padding:0}
     
-    /* Native Chrome pull-to-refresh auf Pixel & Android unterbinden */
     html, body {
       height: 100vh;
       overflow: hidden;
@@ -364,7 +429,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:580px;flex-wrap:nowrap}
     .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 140px;min-width:90px;height:34px}
     
-    /* Pull to Refresh Indicator */
+    /* Pull to Refresh Box */
     .ptr-box{position:absolute;top:0;left:0;right:0;height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;z-index:45;pointer-events:none;transition:height .12s cubic-bezier(0,0,.2,1)}
     .ptr-content{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:6px 14px;display:inline-flex;align-items:center;gap:8px;font-size:.8rem;font-weight:600;color:var(--text);box-shadow:0 4px 12px rgba(0,0,0,.3);transition:border-color .15s, color .15s}
     .ptr-content.dispatch{border-color:var(--accent);color:var(--accent)}
@@ -764,34 +829,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    function setupRefreshButton(){
-      const btn = document.getElementById('refresh-btn');
-      if(!btn) return;
-      let pressTimer = null, isLongPress = false;
-
-      const startPress = () => {
-        isLongPress = false;
-        pressTimer = setTimeout(() => {
-          isLongPress = true;
-          if(navigator.vibrate) navigator.vibrate(30);
-          showToast('🚀 Starte GitHub Action Workflow...', 2000);
-          triggerWorkflow();
-        }, 550);
-      };
-
-      const endPress = () => {
-        clearTimeout(pressTimer);
-        if(!isLongPress){
-          reloadDataSilent(true);
-        }
-      };
-
-      btn.addEventListener('mousedown', startPress);
-      btn.addEventListener('mouseup', endPress);
-      btn.addEventListener('touchstart', startPress, {passive:true});
-      btn.addEventListener('touchend', e => { e.preventDefault(); endPress(); });
-    }
-
     function parsePayload(pw){
       try {
         if(!rawData) return null;
@@ -804,7 +841,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     async function init(){
       initTheme();
-      setupRefreshButton();
       if(window.innerWidth>768 && localStorage.getItem('sidebar_closed')==='true') document.getElementById('sidebar').classList.add('collapsed');
       
       const scroller = document.getElementById('main-scroller');
@@ -825,14 +861,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         hasVibrated = false;
       }, {passive:true});
 
-      // NON-PASSIVE: e.preventDefault() stoppt natives Android/Chrome Pull-to-Refresh
       scroller.addEventListener('touchmove', e => {
         const currentY = e.touches[0].screenY;
         const currentX = e.touches[0].screenX;
         const diffY = currentY - touchStartY;
         const diffX = currentX - touchStartX;
 
-        // Wenn am Seitenanfang nach unten gezogen wird: Browser-Reload blockieren!
         if(isPulling && diffY > 0 && Math.abs(diffY) > Math.abs(diffX) && scroller.scrollTop <= 0){
           if(e.cancelable) e.preventDefault();
 
@@ -911,17 +945,30 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         const r = await fetch('data.json?t=' + Date.now(), {cache:'no-store'}).catch(() => fetch('data.json'));
         if(!r.ok) throw new Error(r.status);
         rawData = await r.text();
-      } catch(e){ document.getElementById('current-title').textContent = "Fehler beim Laden von data.json"; return; }
+      } catch(e){
+        document.getElementById('current-title').textContent = "Fehler beim Laden von data.json";
+        return;
+      }
 
       let parsed = parsePayload('') || (localStorage.getItem('hub_key') ? parsePayload(localStorage.getItem('hub_key')) : null);
-      if(parsed) { globalArticles = parsed; onLoaded(); }
-      else { document.getElementById('auth-overlay').style.display = 'flex'; document.getElementById('auth-pwd').focus(); }
+      if(parsed) {
+        globalArticles = parsed;
+        onLoaded();
+      } else {
+        document.getElementById('auth-overlay').style.display = 'flex';
+        document.getElementById('auth-pwd').focus();
+      }
     }
 
     function submitAuth(){
       const pw = document.getElementById('auth-pwd').value, parsed = parsePayload(pw);
-      if(parsed) { localStorage.setItem('hub_key', pw); globalArticles = parsed; onLoaded(); }
-      else { document.getElementById('auth-err').style.display = 'block'; }
+      if(parsed) {
+        localStorage.setItem('hub_key', pw);
+        globalArticles = parsed;
+        onLoaded();
+      } else {
+        document.getElementById('auth-err').style.display = 'block';
+      }
     }
 
     function onLoaded(){
@@ -942,13 +989,19 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
         const timers = new Map(), obs = new IntersectionObserver(ents => {
           ents.forEach(e => {
-            const id = e.target.dataset.id; if(!id) return;
+            const id = e.target.dataset.id;
+            if(!id) return;
             if(e.isIntersecting){
               timers.set(id, setTimeout(() => {
-                const s = getStorage('seen_news'); if(!s.includes(id)){ s.push(id); setStorage('seen_news', s); }
-                e.target.classList.add('seen'); obs.unobserve(e.target);
+                const s = getStorage('seen_news');
+                if(!s.includes(id)){ s.push(id); setStorage('seen_news', s); }
+                e.target.classList.add('seen');
+                obs.unobserve(e.target);
               }, 1000));
-            } else if(timers.has(id)){ clearTimeout(timers.get(id)); timers.delete(id); }
+            } else if(timers.has(id)){
+              clearTimeout(timers.get(id));
+              timers.delete(id);
+            }
           });
         }, {root: document.querySelector('.main'), threshold: 0.6});
         document.querySelectorAll('.feed-card:not(.seen)').forEach(c => obs.observe(c));
@@ -957,7 +1010,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         mEl.addEventListener('scroll', () => {
           const y = mEl.scrollTop;
           if(Math.abs(lastY-y) > 6 && document.activeElement !== document.getElementById('search-box')) {
-            hEl.classList.toggle('header-hidden', y > lastY && y > 50); lastY = y;
+            hEl.classList.toggle('header-hidden', y > lastY && y > 50);
+            lastY = y;
           }
         }, {passive:true});
 
@@ -968,7 +1022,9 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
             return `<div class="modal-row"><span>${ok?'🟢':'🔴'} ${f.title}</span><span style="color:${ok?'var(--muted)':'#ef4444'};font-family:monospace">${f.code||f.status}</span></div>`;
           }).join('');
         }
-      } catch(err) { console.error(err); }
+      } catch(err) {
+        console.error(err);
+      }
     }
 
     document.addEventListener('visibilitychange', () => {
@@ -983,7 +1039,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     document.addEventListener('keydown', e => {
       if(document.activeElement === document.getElementById('search-box')) return;
       if(e.key==='[') toggleSidebar();
-      if(e.key==='r') reloadDataSilent(true);
+      if(e.key==='r') triggerWorkflow();
       if(e.key==='/'){ e.preventDefault(); document.getElementById('search-box').focus(); }
       if(e.key==='Escape'){ toggleModal('health-modal',false); toggleModal('dup-modal',false); hideToast(); }
     });
@@ -994,7 +1050,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v8';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v9';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
@@ -1014,6 +1070,7 @@ APP_MANIFEST = {
     "icons": [{"src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>", "sizes": "192x192 512x512", "type": "image/svg+xml"}]
 }
 
+
 def render_page(feed_health, feeds, is_archive=False):
     now_str = datetime.datetime.now(datetime.timezone.utc).astimezone(BERLIN_TZ).strftime("%d.%m.%Y %H:%M")
     ok = sum(1 for h in feed_health if h["status"] == "ok" or h["code"] in (200, 304))
@@ -1025,12 +1082,13 @@ def render_page(feed_health, feeds, is_archive=False):
                          .replace("__NAV_TARGET_URL__", "index.html" if is_archive else "archive.html") \
                          .replace("__NAV_TARGET_TEXT__", "← Zum Live-Feed" if is_archive else "📑 Zum Archiv (24–48h)") \
                          .replace("__MARK_ALL_BTN__", "" if is_archive else '<button class="source-btn" style="text-align:center;background:var(--border)" onclick="markAllRead()">✓ Alle gelesen</button>') \
-                         .replace("__DESKTOP_REFRESH_BTN__", "" if is_archive else '<button class="btn" id="refresh-btn" title="Klick: Lokal aktualisieren | Halten: GitHub Workflow starten">🔄</button>') \
+                         .replace("__DESKTOP_REFRESH_BTN__", "" if is_archive else '<button class="btn" id="refresh-btn" onclick="triggerWorkflow()" title="GitHub Workflow starten">🔄</button>') \
                          .replace("__NOW_STR__", now_str) \
                          .replace("__HEALTH_BLOCK__", h_text) \
                          .replace("__HEALTH_DATA__", json.dumps(feed_health, ensure_ascii=False)) \
                          .replace("__CONFIGURED_SOURCES__", json.dumps([f["title"] for f in feeds], ensure_ascii=False)) \
                          .replace("__IS_ARCHIVE__", "true" if is_archive else "false")
+
 
 if __name__ == "__main__":
     os.makedirs("public", exist_ok=True)
@@ -1048,12 +1106,15 @@ if __name__ == "__main__":
 
     new_items = []
     for r in raw_items:
-        if any(r["link"] == c["link"] for c in cached): continue
+        if any(r["link"] == c["link"] for c in cached):
+            continue
         m = next((c for c in cached if is_dup(r["title"], c["title"], extract_features(r["title"]), extract_features(c["title"]))), None)
         if m:
-            if r["source"] != m["source"] and r["source"] not in m.setdefault("other_sources", []): m["other_sources"].append(r["source"])
+            if r["source"] != m["source"] and r["source"] not in m.setdefault("other_sources", []):
+                m["other_sources"].append(r["source"])
             m.setdefault("merged_details", []).append({"source": r["source"], "title": r["title"], "link": r["link"], "matched_with": m["title"]})
-        else: new_items.append(r)
+        else:
+            new_items.append(r)
 
     print(f"📦 Neue Unikate: {len(new_items)} (Cache: {len(cached)})")
     bundled = consolidate_articles(new_items)
@@ -1073,8 +1134,13 @@ if __name__ == "__main__":
             gh.write("deploy=true\n")
 
     json_payload = json.dumps(frontend_data, ensure_ascii=False, separators=(',', ':'))
-    with open("public/data.json", "w", encoding="utf-8") as f: f.write(encrypt_payload(json_payload, pw) if pw else json_payload)
-    with open("public/sw.js", "w", encoding="utf-8") as f: f.write(SW_SCRIPT)
-    with open("public/manifest.json", "w", encoding="utf-8") as f: json.dump(APP_MANIFEST, f)
-    with open("public/index.html", "w", encoding="utf-8") as f: f.write(render_page(feed_health, feeds, is_archive=False))
-    with open("public/archive.html", "w", encoding="utf-8") as f: f.write(render_page(feed_health, feeds, is_archive=True))
+    with open("public/data.json", "w", encoding="utf-8") as f:
+        f.write(encrypt_payload(json_payload, pw) if pw else json_payload)
+    with open("public/sw.js", "w", encoding="utf-8") as f:
+        f.write(SW_SCRIPT)
+    with open("public/manifest.json", "w", encoding="utf-8") as f:
+        json.dump(APP_MANIFEST, f)
+    with open("public/index.html", "w", encoding="utf-8") as f:
+        f.write(render_page(feed_health, feeds, is_archive=False))
+    with open("public/archive.html", "w", encoding="utf-8") as f:
+        f.write(render_page(feed_health, feeds, is_archive=True))
