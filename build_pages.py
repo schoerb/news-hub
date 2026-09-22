@@ -429,9 +429,9 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:580px;flex-wrap:nowrap}
     .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 140px;min-width:90px;height:34px}
     
-    /* Pull to Refresh Box */
-    .ptr-box{position:absolute;top:0;left:0;right:0;height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;z-index:45;pointer-events:none;transition:height .12s cubic-bezier(0,0,.2,1)}
-    .ptr-content{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:6px 14px;display:inline-flex;align-items:center;gap:8px;font-size:.8rem;font-weight:600;color:var(--text);box-shadow:0 4px 12px rgba(0,0,0,.3);transition:border-color .15s, color .15s}
+    /* Pull to Refresh Box (Fest über dem Header verankert) */
+    .ptr-box{position:fixed;top:8px;left:0;right:0;height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;z-index:60;pointer-events:none;transition:height .15s ease}
+    .ptr-content{background:var(--card);border:1px solid var(--border);border-radius:24px;padding:6px 16px;display:inline-flex;align-items:center;gap:8px;font-size:.82rem;font-weight:600;color:var(--text);box-shadow:0 6px 18px rgba(0,0,0,.4);transition:border-color .15s, color .15s}
     .ptr-content.dispatch{border-color:var(--accent);color:var(--accent)}
     .ptr-icon{display:inline-block;transition:transform .15s ease}
 
@@ -529,7 +529,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     <div id="ptr-box" class="ptr-box">
       <div id="ptr-content" class="ptr-content">
         <span id="ptr-icon" class="ptr-icon">↓</span>
-        <span id="ptr-text">Ziehen zum Aktualisieren</span>
+        <span id="ptr-text">Lokale Feeds laden</span>
       </div>
     </div>
     <div class="stream-header">
@@ -802,7 +802,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
               clearInterval(pollInterval);
               if(run.conclusion === 'success'){
                 showToast(`<a href="${runUrl}" target="_blank" rel="noopener" class="toast-link">🎉 Update fertig! Aktualisiere... ↗</a>`, 0);
-                setTimeout(() => reloadDataSilent(), 2000);
+                setTimeout(() => reloadDataSilent(false), 2000);
               } else { showToast(`❌ Fehlgeschlagen (${run.conclusion}). <a href="${runUrl}" target="_blank" rel="noopener">Log ↗</a>`, 9000); }
             }
           }
@@ -811,7 +811,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     }
 
     async function reloadDataSilent(showFeedback = true){
-      if(showFeedback) showToast('<span class="spin">⏳</span> Lade neue Artikel...', 2000);
+      if(showFeedback) showToast('<span class="spin">⏳</span> Lade lokale Feeds...', 2000);
       try {
         const r = await fetch('data.json?t=' + Date.now(), {cache:'no-store'});
         if(!r.ok) throw new Error();
@@ -850,8 +850,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const ptrText = document.getElementById('ptr-text');
 
       let touchStartX = 0, touchStartY = 0, isPulling = false, touchTargetCard = null, hasVibrated = false;
-      const THRESHOLD_LOCAL = 40;
-      const THRESHOLD_WORKFLOW = 75;
 
       scroller.addEventListener('touchstart', e => {
         touchStartX = e.touches[0].screenX;
@@ -867,28 +865,29 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         const diffY = currentY - touchStartY;
         const diffX = currentX - touchStartX;
 
-        if(isPulling && diffY > 0 && Math.abs(diffY) > Math.abs(diffX) && scroller.scrollTop <= 0){
+        // Pull to Refresh aktiv, sobald oben nach unten gezogen wird (> 15px)
+        if(isPulling && diffY > 15 && Math.abs(diffY) > Math.abs(diffX) && scroller.scrollTop <= 0){
           if(e.cancelable) e.preventDefault();
 
-          const pullDist = Math.min(diffY * 0.42, 95);
+          // Sichtbare Höhe des Badges sofort auf mindestens 48px setzen
+          const pullDist = Math.min(48 + (diffY - 15) * 0.35, 92);
           ptrBox.style.height = `${pullDist}px`;
 
-          if(pullDist >= THRESHOLD_WORKFLOW * 0.42){
+          // Stufe 2: Deep Pull (> 80px) -> Workflow starten
+          if(diffY > 80){
             if(!hasVibrated && navigator.vibrate){ navigator.vibrate(25); hasVibrated = true; }
             ptrContent.classList.add('dispatch');
             ptrIcon.style.transform = 'rotate(180deg)';
             ptrIcon.innerHTML = '🚀';
             ptrText.textContent = 'Workflow starten (Deep Pull)';
-          } else if(pullDist >= THRESHOLD_LOCAL * 0.42){
+          } 
+          // Stufe 1: Kurzer Pull (15px bis 80px) -> Lokale Feeds laden
+          else {
             hasVibrated = false;
             ptrContent.classList.remove('dispatch');
             ptrIcon.style.transform = 'rotate(0deg)';
             ptrIcon.innerHTML = '↓';
             ptrText.textContent = 'Lokale Feeds laden';
-          } else {
-            ptrContent.classList.remove('dispatch');
-            ptrIcon.innerHTML = '↓';
-            ptrText.textContent = 'Ziehen zum Aktualisieren';
           }
         } 
         else if(touchTargetCard && Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 100){
@@ -899,10 +898,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       scroller.addEventListener('touchend', e => {
         const diffY = e.changedTouches[0].screenY - touchStartY;
         const diffX = e.changedTouches[0].screenX - touchStartX;
-        const effectivePull = diffY * 0.42;
 
-        if(isPulling && scroller.scrollTop <= 0){
-          if(effectivePull >= THRESHOLD_WORKFLOW * 0.42){
+        if(isPulling && diffY > 20 && scroller.scrollTop <= 0){
+          if(diffY > 80){
+            // Workflow Action
             ptrBox.style.height = '48px';
             ptrIcon.innerHTML = '🔄';
             ptrIcon.className = 'ptr-icon spin';
@@ -913,18 +912,17 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
               ptrIcon.className = 'ptr-icon';
               ptrContent.classList.remove('dispatch');
             }, 1200);
-          } else if(effectivePull >= THRESHOLD_LOCAL * 0.42){
+          } else {
+            // Lokales Nachladen
             ptrBox.style.height = '48px';
             ptrIcon.innerHTML = '🔄';
             ptrIcon.className = 'ptr-icon spin';
-            ptrText.textContent = 'Aktualisiere Feeds...';
+            ptrText.textContent = 'Lade Artikel...';
             reloadDataSilent(false);
             setTimeout(() => {
               ptrBox.style.height = '0';
               ptrIcon.className = 'ptr-icon';
             }, 700);
-          } else {
-            ptrBox.style.height = '0';
           }
         } else {
           ptrBox.style.height = '0';
@@ -1050,7 +1048,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v9';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v10';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
