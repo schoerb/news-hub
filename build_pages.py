@@ -196,7 +196,7 @@ def fetch_all_feeds(feeds, cache_meta):
             health.append(h)
     return all_items, new_meta, health
 
-# --- Deduplizierung ---
+# --- Fast Deduplication ---
 def extract_features(title: str):
     words = re.sub(r"[^\w\s\.]", " ", title.lower()).split()
     nums = {w for w in words if any(c.isdigit() for c in w) and len(w) >= 2}
@@ -311,7 +311,16 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     :root{--bg:#121418;--sidebar:#181b20;--card:#1e2229;--hover:#262b34;--border:#2e3440;--text:#e2e8f0;--muted:#94a3b8;--bold:#f1f5f9;--accent:#2ecc71;--accent-dim:rgba(46,204,113,.15);--link:#60a5fa}
     [data-theme="light"]{--bg:#f8fafc;--sidebar:#fff;--card:#fff;--hover:#f1f5f9;--border:#e2e8f0;--text:#1e293b;--muted:#64748b;--bold:#0f172a;--accent:#16a34a;--accent-dim:rgba(22,163,74,.12);--link:#2563eb}
     *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;height:100vh;overflow:hidden;overscroll-behavior-y:contain}
+    
+    /* Native Chrome pull-to-refresh auf Pixel & Android unterbinden */
+    html, body {
+      height: 100vh;
+      overflow: hidden;
+      overscroll-behavior-y: none;
+      overscroll-behavior-x: none;
+    }
+    body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex}
+    
     .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(2px);z-index:1100;align-items:center;justify-content:center;padding:16px}
     .modal-card{background:var(--sidebar);border:1px solid var(--border);border-radius:12px;padding:24px;width:100%;max-width:540px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 16px 36px rgba(0,0,0,.3)}
     .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px}
@@ -338,7 +347,13 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .sidebar-footer{padding:16px;border-top:1px solid var(--border)}
     .nav-link{display:block;text-align:center;color:var(--accent);text-decoration:none;font-size:.82rem;font-weight:600;padding:8px;border-radius:6px;background:var(--accent-dim);margin-bottom:8px}
     
-    .main{flex-grow:1;overflow-y:auto;position:relative;overscroll-behavior-y:contain}
+    .main{
+      flex-grow:1;
+      overflow-y:auto;
+      position:relative;
+      overscroll-behavior-y:none;
+      -webkit-overflow-scrolling:touch;
+    }
     .stream-header{position:sticky;top:0;z-index:50;background:rgba(18,20,24,.55);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;transition:transform .28s ease}
     .stream-header.header-hidden{transform:translateY(-100%)}
     [data-theme="light"] .stream-header{background:rgba(248,250,252,.65)}
@@ -350,8 +365,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 140px;min-width:90px;height:34px}
     
     /* Pull to Refresh Indicator */
-    .ptr-box{position:absolute;top:0;left:0;right:0;height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;z-index:45;pointer-events:none;transition:height .15s ease}
-    .ptr-content{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:6px 14px;display:inline-flex;align-items:center;gap:8px;font-size:.8rem;font-weight:600;color:var(--text);box-shadow:0 4px 12px rgba(0,0,0,.25);transition:border-color .15s, color .15s}
+    .ptr-box{position:absolute;top:0;left:0;right:0;height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;z-index:45;pointer-events:none;transition:height .12s cubic-bezier(0,0,.2,1)}
+    .ptr-content{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:6px 14px;display:inline-flex;align-items:center;gap:8px;font-size:.8rem;font-weight:600;color:var(--text);box-shadow:0 4px 12px rgba(0,0,0,.3);transition:border-color .15s, color .15s}
     .ptr-content.dispatch{border-color:var(--accent);color:var(--accent)}
     .ptr-icon{display:inline-block;transition:transform .15s ease}
 
@@ -730,7 +745,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       }, 5000);
     }
 
-    // Normaler / lokaler Refresh (nur data.json)
     async function reloadDataSilent(showFeedback = true){
       if(showFeedback) showToast('<span class="spin">⏳</span> Lade neue Artikel...', 2000);
       try {
@@ -803,7 +817,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const THRESHOLD_LOCAL = 40;
       const THRESHOLD_WORKFLOW = 75;
 
-      // Two-Stage Pull to Refresh + Swipe Gesten
       scroller.addEventListener('touchstart', e => {
         touchStartX = e.touches[0].screenX;
         touchStartY = e.touches[0].screenY;
@@ -812,25 +825,27 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         hasVibrated = false;
       }, {passive:true});
 
+      // NON-PASSIVE: e.preventDefault() stoppt natives Android/Chrome Pull-to-Refresh
       scroller.addEventListener('touchmove', e => {
         const currentY = e.touches[0].screenY;
+        const currentX = e.touches[0].screenX;
         const diffY = currentY - touchStartY;
-        const diffX = e.touches[0].screenX - touchStartX;
+        const diffX = currentX - touchStartX;
 
+        // Wenn am Seitenanfang nach unten gezogen wird: Browser-Reload blockieren!
         if(isPulling && diffY > 0 && Math.abs(diffY) > Math.abs(diffX) && scroller.scrollTop <= 0){
-          const pullDist = Math.min(diffY * 0.45, 95);
+          if(e.cancelable) e.preventDefault();
+
+          const pullDist = Math.min(diffY * 0.42, 95);
           ptrBox.style.height = `${pullDist}px`;
 
-          // Stage 2: Deep Pull -> Workflow Trigger
-          if(pullDist >= THRESHOLD_WORKFLOW * 0.45){
+          if(pullDist >= THRESHOLD_WORKFLOW * 0.42){
             if(!hasVibrated && navigator.vibrate){ navigator.vibrate(25); hasVibrated = true; }
             ptrContent.classList.add('dispatch');
             ptrIcon.style.transform = 'rotate(180deg)';
             ptrIcon.innerHTML = '🚀';
             ptrText.textContent = 'Workflow starten (Deep Pull)';
-          }
-          // Stage 1: Short Pull -> Normal Client Refresh
-          else if(pullDist >= THRESHOLD_LOCAL * 0.45){
+          } else if(pullDist >= THRESHOLD_LOCAL * 0.42){
             hasVibrated = false;
             ptrContent.classList.remove('dispatch');
             ptrIcon.style.transform = 'rotate(0deg)';
@@ -845,16 +860,15 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         else if(touchTargetCard && Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 100){
           touchTargetCard.style.transform = `translateX(${diffX * 0.35}px)`;
         }
-      }, {passive:true});
+      }, {passive:false});
 
       scroller.addEventListener('touchend', e => {
         const diffY = e.changedTouches[0].screenY - touchStartY;
         const diffX = e.changedTouches[0].screenX - touchStartX;
-        const effectivePull = diffY * 0.45;
+        const effectivePull = diffY * 0.42;
 
         if(isPulling && scroller.scrollTop <= 0){
-          if(effectivePull >= THRESHOLD_WORKFLOW * 0.45){
-            // Trigger GitHub Actions Workflow
+          if(effectivePull >= THRESHOLD_WORKFLOW * 0.42){
             ptrBox.style.height = '48px';
             ptrIcon.innerHTML = '🔄';
             ptrIcon.className = 'ptr-icon spin';
@@ -865,8 +879,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
               ptrIcon.className = 'ptr-icon';
               ptrContent.classList.remove('dispatch');
             }, 1200);
-          } else if(effectivePull >= THRESHOLD_LOCAL * 0.45){
-            // Normal silent data.json reload
+          } else if(effectivePull >= THRESHOLD_LOCAL * 0.42){
             ptrBox.style.height = '48px';
             ptrIcon.innerHTML = '🔄';
             ptrIcon.className = 'ptr-icon spin';
@@ -981,7 +994,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v7';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v8';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
