@@ -196,7 +196,7 @@ def fetch_all_feeds(feeds, cache_meta):
             health.append(h)
     return all_items, new_meta, health
 
-# --- Schnelle Deduplizierung mit Pre-Caching ---
+# --- Deduplizierung ---
 def extract_features(title: str):
     words = re.sub(r"[^\w\s\.]", " ", title.lower()).split()
     nums = {w for w in words if any(c.isdigit() for c in w) and len(w) >= 2}
@@ -311,7 +311,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     :root{--bg:#121418;--sidebar:#181b20;--card:#1e2229;--hover:#262b34;--border:#2e3440;--text:#e2e8f0;--muted:#94a3b8;--bold:#f1f5f9;--accent:#2ecc71;--accent-dim:rgba(46,204,113,.15);--link:#60a5fa}
     [data-theme="light"]{--bg:#f8fafc;--sidebar:#fff;--card:#fff;--hover:#f1f5f9;--border:#e2e8f0;--text:#1e293b;--muted:#64748b;--bold:#0f172a;--accent:#16a34a;--accent-dim:rgba(22,163,74,.12);--link:#2563eb}
     *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;height:100vh;overflow:hidden}
+    body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;height:100vh;overflow:hidden;overscroll-behavior-y:contain}
     .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(2px);z-index:1100;align-items:center;justify-content:center;padding:16px}
     .modal-card{background:var(--sidebar);border:1px solid var(--border);border-radius:12px;padding:24px;width:100%;max-width:540px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 16px 36px rgba(0,0,0,.3)}
     .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px}
@@ -321,6 +321,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);
       font-size:1.0rem;line-height:1.2;padding:6px 10px;cursor:pointer;flex-shrink:0;
       display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
+      user-select:none;-webkit-user-select:none;
     }
     .btn.active{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
     .btn-open-all{background:var(--accent);border-color:var(--accent);color:#fff;font-size:.85rem;font-weight:600;display:none;white-space:nowrap}
@@ -336,7 +337,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .source-btn.active .badge{background:var(--accent);color:#fff}
     .sidebar-footer{padding:16px;border-top:1px solid var(--border)}
     .nav-link{display:block;text-align:center;color:var(--accent);text-decoration:none;font-size:.82rem;font-weight:600;padding:8px;border-radius:6px;background:var(--accent-dim);margin-bottom:8px}
-    .main{flex-grow:1;overflow-y:auto;position:relative}
+    
+    .main{flex-grow:1;overflow-y:auto;position:relative;overscroll-behavior-y:contain}
     .stream-header{position:sticky;top:0;z-index:50;background:rgba(18,20,24,.55);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;transition:transform .28s ease}
     .stream-header.header-hidden{transform:translateY(-100%)}
     [data-theme="light"] .stream-header{background:rgba(248,250,252,.65)}
@@ -346,6 +348,13 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .header-meta{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap}
     .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:580px;flex-wrap:nowrap}
     .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 140px;min-width:90px;height:34px}
+    
+    /* Pull to Refresh Indicator */
+    .ptr-box{position:absolute;top:0;left:0;right:0;height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;z-index:45;pointer-events:none;transition:height .15s ease}
+    .ptr-content{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:6px 14px;display:inline-flex;align-items:center;gap:8px;font-size:.8rem;font-weight:600;color:var(--text);box-shadow:0 4px 12px rgba(0,0,0,.25);transition:border-color .15s, color .15s}
+    .ptr-content.dispatch{border-color:var(--accent);color:var(--accent)}
+    .ptr-icon{display:inline-block;transition:transform .15s ease}
+
     .cards-grid{padding:14px 16px calc(24px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
     .feed-card{
       background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;
@@ -436,7 +445,13 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       __MARK_ALL_BTN__
     </div>
   </aside>
-  <main class="main">
+  <main class="main" id="main-scroller">
+    <div id="ptr-box" class="ptr-box">
+      <div id="ptr-content" class="ptr-content">
+        <span id="ptr-icon" class="ptr-icon">↓</span>
+        <span id="ptr-text">Ziehen zum Aktualisieren</span>
+      </div>
+    </div>
     <div class="stream-header">
       <div class="header-left">
         <button class="btn" onclick="toggleSidebar()">☰</button>
@@ -468,7 +483,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     const hStr = s => { let h = 0; for(let i=0;i<(s||'').length;i++){ h = ((h<<5)-h)+s.charCodeAt(i); h |= 0; } return Math.abs(h); };
     
-    // Schnelle Zeitangabe ohne schwere Intl-Instanziierungen
     const relTime = d => {
       if(!d) return ''; const diff = Math.floor((Date.now() - new Date(d))/1000);
       return isNaN(diff)?'':diff<60?'gerade':diff<3600?`vor ${Math.floor(diff/60)}m`:diff<86400?`vor ${Math.floor(diff/3600)}h`:`vor ${Math.floor(diff/86400)}d`;
@@ -716,15 +730,52 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       }, 5000);
     }
 
-    async function reloadDataSilent(){
+    // Normaler / lokaler Refresh (nur data.json)
+    async function reloadDataSilent(showFeedback = true){
+      if(showFeedback) showToast('<span class="spin">⏳</span> Lade neue Artikel...', 2000);
       try {
         const r = await fetch('data.json?t=' + Date.now(), {cache:'no-store'});
         if(!r.ok) throw new Error();
         rawData = await r.text();
         const parsed = parsePayload(localStorage.getItem('hub_key')||"");
-        if(parsed) { globalArticles = parsed; onLoaded(); showToast('✅ Feeds aktualisiert!', 3500); }
-        else { location.reload(); }
-      } catch(e){ location.reload(); }
+        if(parsed) {
+          globalArticles = parsed;
+          onLoaded();
+          if(showFeedback) showToast('✅ Feeds aktualisiert!', 3000);
+        } else {
+          location.reload();
+        }
+      } catch(e){
+        location.reload();
+      }
+    }
+
+    function setupRefreshButton(){
+      const btn = document.getElementById('refresh-btn');
+      if(!btn) return;
+      let pressTimer = null, isLongPress = false;
+
+      const startPress = () => {
+        isLongPress = false;
+        pressTimer = setTimeout(() => {
+          isLongPress = true;
+          if(navigator.vibrate) navigator.vibrate(30);
+          showToast('🚀 Starte GitHub Action Workflow...', 2000);
+          triggerWorkflow();
+        }, 550);
+      };
+
+      const endPress = () => {
+        clearTimeout(pressTimer);
+        if(!isLongPress){
+          reloadDataSilent(true);
+        }
+      };
+
+      btn.addEventListener('mousedown', startPress);
+      btn.addEventListener('mouseup', endPress);
+      btn.addEventListener('touchstart', startPress, {passive:true});
+      btn.addEventListener('touchend', e => { e.preventDefault(); endPress(); });
     }
 
     function parsePayload(pw){
@@ -739,37 +790,108 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     async function init(){
       initTheme();
+      setupRefreshButton();
       if(window.innerWidth>768 && localStorage.getItem('sidebar_closed')==='true') document.getElementById('sidebar').classList.add('collapsed');
       
-      // Global Event Delegation für Touch-Swipe (extrem performant)
-      let touchStartX = 0, touchStartY = 0, touchTargetCard = null;
-      const container = document.getElementById('articles-container');
-      container.addEventListener('touchstart', e => {
+      const scroller = document.getElementById('main-scroller');
+      const ptrBox = document.getElementById('ptr-box');
+      const ptrContent = document.getElementById('ptr-content');
+      const ptrIcon = document.getElementById('ptr-icon');
+      const ptrText = document.getElementById('ptr-text');
+
+      let touchStartX = 0, touchStartY = 0, isPulling = false, touchTargetCard = null, hasVibrated = false;
+      const THRESHOLD_LOCAL = 40;
+      const THRESHOLD_WORKFLOW = 75;
+
+      // Two-Stage Pull to Refresh + Swipe Gesten
+      scroller.addEventListener('touchstart', e => {
+        touchStartX = e.touches[0].screenX;
+        touchStartY = e.touches[0].screenY;
         touchTargetCard = e.target.closest('.feed-card');
-        if(!touchTargetCard) return;
-        touchStartX = e.changedTouches[0].screenX;
-        touchStartY = e.changedTouches[0].screenY;
+        isPulling = (scroller.scrollTop <= 0);
+        hasVibrated = false;
       }, {passive:true});
 
-      container.addEventListener('touchmove', e => {
-        if(!touchTargetCard) return;
-        const diffX = e.changedTouches[0].screenX - touchStartX;
-        const diffY = e.changedTouches[0].screenY - touchStartY;
-        if(Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 100){
+      scroller.addEventListener('touchmove', e => {
+        const currentY = e.touches[0].screenY;
+        const diffY = currentY - touchStartY;
+        const diffX = e.touches[0].screenX - touchStartX;
+
+        if(isPulling && diffY > 0 && Math.abs(diffY) > Math.abs(diffX) && scroller.scrollTop <= 0){
+          const pullDist = Math.min(diffY * 0.45, 95);
+          ptrBox.style.height = `${pullDist}px`;
+
+          // Stage 2: Deep Pull -> Workflow Trigger
+          if(pullDist >= THRESHOLD_WORKFLOW * 0.45){
+            if(!hasVibrated && navigator.vibrate){ navigator.vibrate(25); hasVibrated = true; }
+            ptrContent.classList.add('dispatch');
+            ptrIcon.style.transform = 'rotate(180deg)';
+            ptrIcon.innerHTML = '🚀';
+            ptrText.textContent = 'Workflow starten (Deep Pull)';
+          }
+          // Stage 1: Short Pull -> Normal Client Refresh
+          else if(pullDist >= THRESHOLD_LOCAL * 0.45){
+            hasVibrated = false;
+            ptrContent.classList.remove('dispatch');
+            ptrIcon.style.transform = 'rotate(0deg)';
+            ptrIcon.innerHTML = '↓';
+            ptrText.textContent = 'Lokale Feeds laden';
+          } else {
+            ptrContent.classList.remove('dispatch');
+            ptrIcon.innerHTML = '↓';
+            ptrText.textContent = 'Ziehen zum Aktualisieren';
+          }
+        } 
+        else if(touchTargetCard && Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 100){
           touchTargetCard.style.transform = `translateX(${diffX * 0.35}px)`;
         }
       }, {passive:true});
 
-      container.addEventListener('touchend', e => {
-        if(!touchTargetCard) return;
-        touchTargetCard.style.transform = '';
-        const diffX = e.changedTouches[0].screenX - touchStartX;
+      scroller.addEventListener('touchend', e => {
         const diffY = e.changedTouches[0].screenY - touchStartY;
-        if(Math.abs(diffX) > 60 && Math.abs(diffX) > Math.abs(diffY) * 1.4){
-          if(diffX > 0) shareArticle(touchTargetCard.dataset.title, touchTargetCard.dataset.link);
-          else toggleBookmark(touchTargetCard.dataset.id);
+        const diffX = e.changedTouches[0].screenX - touchStartX;
+        const effectivePull = diffY * 0.45;
+
+        if(isPulling && scroller.scrollTop <= 0){
+          if(effectivePull >= THRESHOLD_WORKFLOW * 0.45){
+            // Trigger GitHub Actions Workflow
+            ptrBox.style.height = '48px';
+            ptrIcon.innerHTML = '🔄';
+            ptrIcon.className = 'ptr-icon spin';
+            ptrText.textContent = 'Starte Workflow...';
+            triggerWorkflow();
+            setTimeout(() => {
+              ptrBox.style.height = '0';
+              ptrIcon.className = 'ptr-icon';
+              ptrContent.classList.remove('dispatch');
+            }, 1200);
+          } else if(effectivePull >= THRESHOLD_LOCAL * 0.45){
+            // Normal silent data.json reload
+            ptrBox.style.height = '48px';
+            ptrIcon.innerHTML = '🔄';
+            ptrIcon.className = 'ptr-icon spin';
+            ptrText.textContent = 'Aktualisiere Feeds...';
+            reloadDataSilent(false);
+            setTimeout(() => {
+              ptrBox.style.height = '0';
+              ptrIcon.className = 'ptr-icon';
+            }, 700);
+          } else {
+            ptrBox.style.height = '0';
+          }
+        } else {
+          ptrBox.style.height = '0';
         }
-        touchTargetCard = null;
+        isPulling = false;
+
+        if(touchTargetCard){
+          touchTargetCard.style.transform = '';
+          if(Math.abs(diffX) > 60 && Math.abs(diffX) > Math.abs(diffY) * 1.4){
+            if(diffX > 0) shareArticle(touchTargetCard.dataset.title, touchTargetCard.dataset.link);
+            else toggleBookmark(touchTargetCard.dataset.id);
+          }
+          touchTargetCard = null;
+        }
       }, {passive:true});
 
       try {
@@ -848,6 +970,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     document.addEventListener('keydown', e => {
       if(document.activeElement === document.getElementById('search-box')) return;
       if(e.key==='[') toggleSidebar();
+      if(e.key==='r') reloadDataSilent(true);
       if(e.key==='/'){ e.preventDefault(); document.getElementById('search-box').focus(); }
       if(e.key==='Escape'){ toggleModal('health-modal',false); toggleModal('dup-modal',false); hideToast(); }
     });
@@ -858,7 +981,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v5';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v7';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
@@ -889,7 +1012,7 @@ def render_page(feed_health, feeds, is_archive=False):
                          .replace("__NAV_TARGET_URL__", "index.html" if is_archive else "archive.html") \
                          .replace("__NAV_TARGET_TEXT__", "← Zum Live-Feed" if is_archive else "📑 Zum Archiv (24–48h)") \
                          .replace("__MARK_ALL_BTN__", "" if is_archive else '<button class="source-btn" style="text-align:center;background:var(--border)" onclick="markAllRead()">✓ Alle gelesen</button>') \
-                         .replace("__DESKTOP_REFRESH_BTN__", "" if is_archive else '<button class="btn" onclick="triggerWorkflow()">🔄</button>') \
+                         .replace("__DESKTOP_REFRESH_BTN__", "" if is_archive else '<button class="btn" id="refresh-btn" title="Klick: Lokal aktualisieren | Halten: GitHub Workflow starten">🔄</button>') \
                          .replace("__NOW_STR__", now_str) \
                          .replace("__HEALTH_BLOCK__", h_text) \
                          .replace("__HEALTH_DATA__", json.dumps(feed_health, ensure_ascii=False)) \
