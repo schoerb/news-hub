@@ -1,161 +1,94 @@
 # ⚡ News-Hub
 
-Ein hochperformanter, KI-gestützter und clientseitig verschlüsselter RSS-Nachrichten-Aggregator. News-Hub konsolidiert Dutzende Tech-Feeds, filtert plattformübergreifend Duplikate heraus, übersetzt englische Meldungen vollautomatisch ins Deutsche und fasst Kernpunkte mittels Google Gemini prägnant zusammen.
+Ein leichtgewichtiger, selbst gehosteter RSS-News-Aggregator mit automatischer Deduplizierung, Gemini-gestützter Zusammenfassung/Übersetzung, AES-Verschlüsselung und einer für mobile Geräte optimierten Web-App (PWA).
 
-Das Ergebnis wird als schlanke, statische Progressive Web App (PWA) via GitHub Pages bereitgestellt.
-
----
-
-## ✨ Features & Highlights
-
-### 🧠 KI-Redaktion (Google Gemini)
-* **Automatische Titelübersetzung:** Englische Schlagzeilen werden ohne Sinnverlust vollständig ins Deutsche übertragen.
-* **Anti-Clickbait:** Reißerische Überschriften werden durch konkrete Modellnamen, Versionsnummern oder Fehlerbeschreibungen ersetzt.
-* **1-Satz-Zusammenfassung mit Fallback:** Jeder Artikel erhält genau einen kompakten Satz mit **fettgedruckten Schlüsselwörtern**. Sollte die API leer bleiben, greift automatisch ein Feed-Auszug.
-* **Intelligente Bildfilterung:** Nur informative Fotos (Geräte, Benchmarks, UI-Screenshots) werden übernommen – Werbelogos, Tracking-Pixel und generische Icons werden automatisch verworfen.
-
-### 🧹 Ausgefeilte Deduplizierung ($O(N^2)$ zeitfensteroptimiert)
-* **20h-Zeitfenster Short-Circuit:** Liegen ähnliche Schlagzeilen mehr als 20 Stunden auseinander, werden sie nicht gemerged. Verhindert falsche Zusammenführungen bei wiederkehrenden Newsthemen.
-* **Multi-Source Merge:** Berichten mehrere Magazine über denselben Sachverhalt, bleibt nur der primäre Artikel (nach konfigurierter Priorität) erhalten. Alle weiteren Quellen werden als Badge (`Auch bei: Heise, Golem`) verlinkt.
-* **Interaktives Dubletten-Modal:** Aufschlüsselung aller zusammengeführten Meldungen samt Original-Links nach Quelle aufklappbar (`🧹 X Duplikate bereinigt ℹ️`).
-
-### 📱 Responsive UI & Mobile First (PWA)
-* **Desktop:**
-  * **Auto-Hide Sticky Header:** Gleitet beim Runterscrollen aus dem Blickfeld und erscheint beim Hochscrollen sofort wieder.
-  * Vollständige Tastatur-Navigation (`J`/`K` navigieren, `O` öffnen, `M` gelesen/ungelesen, `[` Sidebar toggeln, `/` Suche, `Esc` Modals schließen).
-* **Smartphone:**
-  * **Floating Bottom Pill:** Ergonomische Daumenleiste für Menü (`☰`), Suche (`🔍`), Workflow-Trigger (`🔄`) und Theme-Toggle (`🌓`).
-  * **Layering & Überlappungsschutz:** Beim Öffnen der mobilen Sidebar blendet sich die Navigationsleiste automatisch nach unten aus und die Menüleiste legt sich mit erhöhtem Z-Index vollflächig über das Layout.
-  * **Gestenleisten-Support:** Nutzt `env(safe-area-inset-bottom)` und 48×48px Touch-Targets für fehlerfreie Einhandbedienung.
-* **DOM- & Performance-Tuning:**
-  * **Debounced Search (120ms):** Verhindert Ruckler beim schnellen Tippen im Suchfeld.
-  * **Scroll-Gedächtnis (`seen` vs. `read`):** Sichtbare Artikel (ab 1 Sekunde Viewport) werden gedimmt (`seen`), geklickte oder manuell markierte Meldungen ausgegraut (`read`).
-  * **Live-Sync:** Beim Tab-Fokus oder Entsperren des Handys via `visibilitychange` prüft das Frontend im Hintergrund auf neu gebaute `data.json`-Dateien und aktualisiert relative Zeitangaben.
-
-### 🔐 Ende-zu-Ende-Verschlüsselung & Workflow-Diagnose
-* **AES-256-CBC:** Verschlüsselung der `data.json` direkt im GitHub Actions Runner. Entschlüsselung erfolgt clientseitig über Web Crypto / CryptoJS.
-* **Direktabsprung zu GitHub Actions:** 
-  * Der Reload-Button (`🔄`) bietet nach dem Start per Dialog an, direkt zur GitHub Actions Workflow-Übersicht zu springen.
-  * Das Diagnose-Modal (`📡 Feed-Status Details`) enthält einen direkten Schnellzugriffslink auf den aktuellen Workflow-Status.
+Gehostet via **GitHub Pages**, vollautomatisiert über **GitHub Actions**.
 
 ---
 
-## 🏗️ Architektur & Performance
+## ✨ Features
 
-```text
-[ RSS / Atom Feeds ] 
-      │ (Thread-Pool + ETag / 304 Cache + Zeitstempel-Toleranz)
-      ▼
-[ build_pages.py ] 
-      │
-      ├── 1. Lokaler Cross-Check & 20h-Zeitfenster (Duplikate abfangen)
-      ├── 2. Delta-Batching (nur echte Neuheiten verarbeiten)
-      ├── 3. Gemini Flash (2 parallele Worker, strukturierter JSON-Output)
-      ├── 4. Globaler Bereinigungslauf & Payload-Verschlankung
-      └── 5. AES-Verschlüsselung & statische HTML-Generierung
-      │
-      ▼
-[ GitHub Pages / Browser ]
-      └── Entschlüsselung im Client, PWA-Caching & Indexed/Local Storage
-```
+- **Automatisierte Feed-Verarbeitung:** Liest Feeds per OPML ein, nutzt HTTP-Caching (ETag / Last-Modified) für schnelle Abfragen und minimale Bandbreite.
+- **KI-Zusammenfassung & Übersetzung:** Nutzt die Google Gemini API, um fremdsprachige Artikel ins Deutsche zu übersetzen und auf genau einen Satz mit prägnanten Fettungen einzudampfen.
+- **Smarte Bildextraktion:** Erkennt Bilder aus media:content, Enclosures sowie modernen HTML-Tags (data-src, data-original, WordPress/CDN-Bilder) und übernimmt Bilder bei Duplikaten automatisch von Zweitquellen.
+- **Robuste Deduplizierung:** Verhindert Fehlverschmelzungen bei Versions-/Modellnummern (z. B. iPhone 16 vs. Galaxy 16GB) durch Keyword-Overlap und SequenceMatcher. Verhindert das Aufblähen von Duplikat-Listen über mehrere Runs hinweg.
+- **Zweistufiges Pull-to-Refresh (Mobile):**
+  - **Kurzer Zug (25px–179px):** Lädt lautlos die lokale data.json nach.
+  - **Tiefer Zug (ab 180px):** Schaltet mit haptischem Feedback (Vibration) um und triggert den entfernten GitHub Actions Workflow.
+  - Blockiert das native Chrome/Android-Pull-to-Refresh verlässlich via overscroll-behavior-y: none.
+- **Workflow-Trigger & Live-Polling:** Button in der Navigation startet direkt den GitHub Actions Dispatch und pollt den Build-Status mit direkter Verlinkung zu den Action-Logs.
+- **Ende-zu-Ende-Verschlüsselung:** Verschlüsselt die generierte data.json via AES-CBC (OpenSSL-kompatibel), falls ein Seitenpasswort vergeben ist.
+- **Progressive Web App (PWA):** Offline-Fallback dank Service Worker mit Network-First-Strategie für Daten und HTML.
+- **Archiv-Ansicht:** Automatische Trennung zwischen aktuellem Live-Feed (letzte 24h) und Archiv (24–48h).
 
 ---
 
-## ⚙️ Einrichtung & Konfiguration
+## 🚀 Setup & Konfiguration
 
 ### 1. Repository Secrets & Variablen
 
-Unter **Settings → Secrets and variables → Actions** einrichten:
+Lege unter Settings > Secrets and variables > Actions folgende Einträge an:
 
-| Typ | Name | Beschreibung |
-| :--- | :--- | :--- |
-| **Secret** | `GEMINI_API_KEY` | *(Erforderlich)* API-Key für Google Gemini. |
-| **Secret** | `PAGE_PASSWORD` | *(Optional)* Passwort für die AES-256-Verschlüsselung von `data.json`. Bleibt unverschlüsselt, wenn leer. |
-| **Secret** | `FEEDS_OPML` | *(Optional)* Rohinhalt deiner `feeds.opml`. Falls nicht gesetzt, wird eine lokale `feeds.opml` im Repo verwendet. |
-| **Secret** | `FEED_PRIORITIES`| *(Optional)* JSON-Map mit Quell-Prioritäten, z. B. `{"Heise Online": 2, "Golem": 1}`. |
-| **Variable**| `DEDUP_RATIO` | *(Optional)* Schwellenwert für String-Ähnlichkeit (Default: `0.78`). |
-| **Variable**| `DEDUP_OVERLAP`| *(Optional)* Schwellenwert für Keyword-Überdeckung (Default: `0.65`). |
+| Secret / Variable | Erforderlich | Beschreibung |
+|---|---|---|
+| GEMINI_API_KEY | Ja | Google AI Studio API-Key für Zusammenfassungen und Übersetzungen. |
+| FEEDS_OPML | Nein | Rohinhalt deiner OPML-Datei als String (Fallback: feeds.opml im Repo-Root). |
+| PAGE_PASSWORD | Nein | Passwort zur AES-Verschlüsselung der data.json (leer lassen für Plaintext). |
+| FEED_PRIORITIES | Nein | JSON-Objekt zur Priorisierung bestimmter Feeds, z. B. {"Heise": 2, "Golem": 2}. |
+| DEDUP_RATIO | Nein | Schwellenwert für String-Ähnlichkeit (Default: 0.82). |
+| DEDUP_OVERLAP | Nein | Schwellenwert für Keyword-Overlap (Default: 0.72). |
 
----
+### 2. GitHub Personal Access Token (PAT) für Dispatches
 
-### 2. GitHub Actions Workflow (`.github/workflows/deploy.yml`)
-
-```yaml
-name: Deploy News Hub
-
-on:
-  schedule:
-    # Läuft halbstündlich zwischen ca. 06:00 und 23:59 Uhr deutscher Zeit
-    - cron: '*/30 4-22 * * *'
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pages: write
-      id-token: write
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install Dependencies
-        run: |
-          pip install feedparser google-genai pydantic requests cryptography urllib3
-
-      - name: Build Pages & Process Feeds
-        id: build
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          PAGE_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
-          FEEDS_OPML: ${{ secrets.FEEDS_OPML }}
-          FEED_PRIORITIES: ${{ secrets.FEED_PRIORITIES }}
-        run: |
-          python build_pages.py
-
-      - name: Cache Metadata Commit
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add cache_meta.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: update feed cache metadata [skip ci]" && git push)
-
-      - name: Upload Pages Artifact
-        if: steps.build.outputs.deploy == 'true' || github.event_name == 'workflow_dispatch'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: public
-
-      - name: Deploy to GitHub Pages
-        if: steps.build.outputs.deploy == 'true' || github.event_name == 'workflow_dispatch'
-        uses: actions/deploy-pages@v4
-```
+Um den Workflow direkt aus der Web-App heraus neu zu starten:
+1. Erstelle unter GitHub > Settings > Developer Settings > Personal Access Tokens (classic) ein Token mit Scope repo (oder workflow).
+2. Beim ersten Klick auf den Aktualisieren-Button in der Web-App wirst du nach dem Token gefragt. Es wird ausschließlich lokal im localStorage deines Browsers hinterlegt.
 
 ---
 
-## ⌨️ Tastaturkürzel (Desktop)
+## 🛠️ Lokale Ausführung
 
-| Taste | Aktion |
-| :---: | :--- |
-| <kbd>J</kbd> / <kbd>↓</kbd> | Nächsten Artikel auswählen |
-| <kbd>K</kbd> / <kbd>↑</kbd> | Vorherigen Artikel auswählen |
-| <kbd>O</kbd> / <kbd>Enter</kbd> | Ausgewählten Artikel im neuen Tab öffnen & als gelesen markieren |
-| <kbd>M</kbd> | Ausgewählten Artikel als gelesen / ungelesen umschalten |
-| <kbd>[</kbd> | Sidebar ein- oder ausklappen |
-| <kbd>/</kbd> | Direkt in das Suchfeld springen |
-| <kbd>Esc</kbd> | Suche verlassen / geöffnete Modals schließen |
+1. Abhaengigkeiten installieren: pip install -r requirements.txt
+2. Umgebungsvariablen setzen:
+   export GEMINI_API_KEY="dein-api-key"
+   export PAGE_PASSWORD="optionales-passwort"
+3. Build ausfuehren: python build_pages.py
+4. Lokalen Webserver starten: cd public && python -m http.server 8000
+
+Anschließend im Browser http://localhost:8000 aufrufen.
+
+---
+
+## 📱 Bedienung & Gesten
+
+- Pull-to-Refresh:
+  - Leichtes Herunterziehen: Aktualisiert die Artikel lokal aus der bereitgestellten data.json.
+  - Weites Herunterziehen (Richtung Displaymitte): Startet die GitHub Action neu.
+- Wischgesten auf News-Karten:
+  - Nach rechts wischen: Artikel teilen / Link kopieren.
+  - Nach links wischen: Lesezeichen setzen / merken.
+- Tastatur-Navigation (Desktop):
+  - j / k: Vorheriger / Nächster Artikel.
+  - o: Artikel im neuen Tab öffnen.
+  - m: Als gelesen / ungelesen markieren.
+  - b: Lesezeichen umschalten.
+  - r: GitHub Workflow neu anstoßen.
+  - [: Seitenleiste ein-/ausklappen.
+  - /: Suchfeld fokussieren.
+  - Esc: Modals und Toasts schließen.
+
+---
+
+## 📂 Dateistruktur
+
+- .github/workflows/deploy.yml: GitHub Actions Definition
+- build_pages.py: Hauptskript (Fetching, Deduplizierung, Gemini, Render)
+- feeds.opml: Lokale Feedliste
+- requirements.txt: Python-Abhängigkeiten
+- public/: Build-Artefakte für GitHub Pages (index.html, archive.html, data.json, sw.js, manifest.json)
+
+---
+
+## 🔒 Datenschutz & Sicherheit
+
+Wird ein PAGE_PASSWORD vergeben, liegt auf GitHub Pages zu keinem Zeitpunkt lesbarer Klartext deiner News-Feeds. Die Entschlüsselung erfolgt rein clientseitig im Browser mittels CryptoJS.AES.
