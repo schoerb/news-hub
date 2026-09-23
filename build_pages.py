@@ -30,8 +30,8 @@ MAX_RETENTION_HOURS, MAX_DEDUP_HOURS = 48, 20
 REMOTE_DATA_URL = "https://schoerb.github.io/news-hub/data.json"
 REMOTE_META_URL = "https://schoerb.github.io/news-hub/cache_meta.json"
 BERLIN_TZ = zoneinfo.ZoneInfo("Europe/Berlin")
-DEDUP_RATIO = float(os.environ.get("DEDUP_RATIO", "0.78"))
-DEDUP_OVERLAP = float(os.environ.get("DEDUP_OVERLAP", "0.65"))
+DEDUP_RATIO = float(os.environ.get("DEDUP_RATIO", "0.82"))
+DEDUP_OVERLAP = float(os.environ.get("DEDUP_OVERLAP", "0.72"))
 
 STOPWORDS = {
     "im", "in", "der", "die", "das", "den", "dem", "des", "für", "von", "mit", "ab", "sofort",
@@ -121,17 +121,36 @@ def parse_opml():
 
 
 def extract_image(e):
+    bad_markers = ["favicon", "avatar", "logo", "tracking", "1x1", "pixel", "icon", "share-button", "author"]
+
+    # 1. Media Tags prüfen
     for k in ("media_content", "media_thumbnail"):
         if e.get(k):
-            u = e[k][0].get("url")
-            if u and not any(b in u.lower() for b in ["favicon", "avatar", "logo", "tracking", "1x1"]):
-                return u
+            for item in e[k]:
+                u = item.get("url")
+                if u and not any(b in u.lower() for b in bad_markers):
+                    return u
+
+    # 2. Enclosures prüfen (auch ohne mime-type 'image/')
     for enc in e.get("enclosures", []):
-        if enc.get("type", "").startswith("image/") and enc.get("href"):
-            return enc.get("href")
-    c = e.get("summary", "") + (e.content[0].get("value", "") if "content" in e and e.content else "")
-    m = re.search(r'<img[^>]+src=["\']?([^\s"\'<>]+\.(?:jpg|jpeg|png|webp))', c, re.I)
-    return m.group(1) if m and not any(b in m.group(1).lower() for b in ["favicon", "pixel", "1x1"]) else None
+        href = enc.get("href", "")
+        enc_type = enc.get("type", "").lower()
+        if href and (enc_type.startswith("image/") or any(ext in href.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"])):
+            if not any(b in href.lower() for b in bad_markers):
+                return href
+
+    # 3. HTML-Content & Summaries prüfen (inklusive data-src und CDN-URLs)
+    c = e.get("summary", "")
+    if "content" in e and e.content:
+        c += " " + e.content[0].get("value", "")
+
+    m = re.search(r'<img[^>]+(?:src|data-src|data-original)=["\']?([^\s"\'<>]+)', c, re.I)
+    if m:
+        u = m.group(1).strip()
+        if not any(b in u.lower() for b in bad_markers):
+            return u
+
+    return None
 
 
 def parse_ts(val) -> int:
@@ -250,7 +269,7 @@ def fetch_all_feeds(feeds, cache_meta):
     return all_items, new_meta, health
 
 
-# --- Deduplizierung ---
+# --- Präzise Deduplizierung ---
 def extract_features(title: str):
     words = re.sub(r"[^\w\s\.]", " ", title.lower()).split()
     nums = {w for w in words if any(c.isdigit() for c in w) and len(w) >= 2}
@@ -261,14 +280,24 @@ def extract_features(title: str):
 def is_dup(t_a: str, t_b: str, feat_a, feat_b) -> bool:
     kw_a, num_a = feat_a
     kw_b, num_b = feat_b
-    if (num_a & num_b) and len(kw_a & kw_b) >= 2:
-        return True
+
+    # Nur bei abweichenden Versions-/Modellnummern early exit
+    if num_a and num_b and not (num_a & num_b):
+        return False
+
+    common_kws = kw_a & kw_b
     sub = {wa[:5] for wa in kw_a for wb in kw_b if len(wa) >= 5 and len(wb) >= 5 and wa[:5] == wb[:5]}
+    effective_common = len(common_kws | sub)
     min_len = min(len(kw_a), len(kw_b))
-    if min_len >= 3 and (len(kw_a & kw_b | sub) / min_len) >= DEDUP_OVERLAP:
+
+    if min_len >= 3 and effective_common >= 3 and (effective_common / min_len) >= DEDUP_OVERLAP:
         return True
-    if (kw_a & kw_b or sub) and (min(len(t_a), len(t_b)) / max(len(t_a), len(t_b)) >= 0.65):
-        return SequenceMatcher(None, t_a.lower(), t_b.lower()).quick_ratio() >= DEDUP_RATIO
+
+    if effective_common >= 2 and (min(len(t_a), len(t_b)) / max(len(t_a), len(t_b)) >= 0.70):
+        clean_a = re.sub(r"[^\w\s]", "", t_a.lower())
+        clean_b = re.sub(r"[^\w\s]", "", t_b.lower())
+        return SequenceMatcher(None, clean_a, clean_b).quick_ratio() >= DEDUP_RATIO
+
     return False
 
 
@@ -293,13 +322,23 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
             others = match.setdefault("other_sources", [])
             if src and src != match.get("source") and src not in others:
                 others.append(src)
-            for osrc in item.get("other_sources", []):
-                if osrc != match.get("source") and osrc not in others:
-                    others.append(osrc)
-            match.setdefault("merged_details", []).append({
-                "source": src or "Unbekannt", "title": item.get("title", ""), "link": item.get("link", ""), "matched_with": match.get("title", "")
-            })
-            match["merged_details"].extend(item.get("merged_details", []))
+
+            # Bild nachziehen, wenn die Primärquelle keines hatte
+            if not match.get("image") and item.get("image"):
+                match["image"] = item["image"]
+
+            seen_links = {d.get("link") for d in match.setdefault("merged_details", [])}
+            if item.get("link") and item["link"] not in seen_links and item["link"] != match.get("link"):
+                match["merged_details"].append({
+                    "source": src or "Unbekannt",
+                    "title": item.get("title", ""),
+                    "link": item.get("link", ""),
+                    "matched_with": match.get("title", "")
+                })
+            for det in item.get("merged_details", []):
+                if det.get("link") and det["link"] not in seen_links and det["link"] != match.get("link"):
+                    match["merged_details"].append(det)
+                    seen_links.add(det["link"])
         else:
             c = dict(item)
             c.setdefault("other_sources", [])
@@ -314,7 +353,7 @@ class DeltaItem(BaseModel):
     id: int
     german_title: str = Field(description="Zwingend auf DEUTSCH übersetzen. Kein Clickbait.")
     summary: str = Field(description="Genau 1 deutscher Satz mit **fett** hervorgehobenen Begriffen.")
-    use_image: bool = Field(default=False)
+    use_image: bool = Field(default=True)
 
 
 class DeltaBatchResponse(BaseModel):
@@ -329,7 +368,14 @@ def summarize_delta_with_gemini(items):
 
     def _call(chunk):
         payload = [{"id": i, "original_title": a["title"], "source": a["source"], "raw_text": a["summary"], "has_image": bool(a.get("image"))} for i, a in enumerate(chunk)]
-        prompt = f"Chefredakteur Tech-News:\n1. 'german_title': Auf Deutsch übersetzen (Kein Clickbait).\n2. 'summary': Genau 1 deutscher Satz mit **fett**.\n3. 'use_image': True nur bei echten Hardware-Fotos.\nArtikel:\n{json.dumps(payload, ensure_ascii=False)}"
+        prompt = (
+            "Chefredakteur Tech-News:\n"
+            "1. 'german_title': Auf Deutsch übersetzen (Kein Clickbait).\n"
+            "2. 'summary': Genau 1 deutscher Satz mit **fett**.\n"
+            "3. 'use_image': True bei thematisch passenden Bildern, Screenshots oder Hardware-Fotos. "
+            "False nur wenn es sich um reine Firmenlogos, Autoren-Porträts oder Icons handelt.\n"
+            f"Artikel:\n{json.dumps(payload, ensure_ascii=False)}"
+        )
         for attempt in range(3):
             try:
                 res = client.models.generate_content(
@@ -429,7 +475,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:580px;flex-wrap:nowrap}
     .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 140px;min-width:90px;height:34px}
     
-    /* Pull to Refresh Box (Fest über dem Header verankert) */
+    /* Pull to Refresh Box */
     .ptr-box{position:fixed;top:8px;left:0;right:0;height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;z-index:60;pointer-events:none;transition:height .15s ease}
     .ptr-content{background:var(--card);border:1px solid var(--border);border-radius:24px;padding:6px 16px;display:inline-flex;align-items:center;gap:8px;font-size:.82rem;font-weight:600;color:var(--text);box-shadow:0 6px 18px rgba(0,0,0,.4);transition:border-color .15s, color .15s}
     .ptr-content.dispatch{border-color:var(--accent);color:var(--accent)}
@@ -664,7 +710,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       let totalDups = 0; counts = {};
       for(let i = 0; i < articles.length; i++) {
         const a = articles[i];
-        totalDups += (a.other_sources||[]).length;
+        const dupCount = (a.merged_details && a.merged_details.length) ? a.merged_details.length : (a.other_sources || []).length;
+        totalDups += dupCount;
         counts[a.source||"Unbekannt"] = (counts[a.source||"Unbekannt"]||0) + 1;
       }
       const tEl = document.getElementById('current-title');
@@ -712,12 +759,26 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     function openDupModal(){
       const el = document.getElementById('dup-list'); if(!el) return;
-      const m = {}; let tot = 0;
+      const m = {};
+      let tot = 0;
+      
       liveArticles.forEach(a => {
-        (a.merged_details||[]).forEach(d => { const s = d.source||"Unbekannt"; (m[s]=m[s]||[]).push(d); tot++; });
-        (a.other_sources||[]).forEach(src => { if(!m[src]){ m[src]=[{source:src,title:"Altbestand",link:a.link,matched_with:a.title,is_legacy:true}]; tot++; } });
+        const details = a.merged_details || [];
+        if (details.length) {
+          details.forEach(d => {
+            const s = d.source || "Unbekannt";
+            (m[s] = m[s] || []).push(d);
+            tot++;
+          });
+        } else if (a.other_sources && a.other_sources.length) {
+          a.other_sources.forEach(src => {
+            (m[src] = m[src] || []).push({ source: src, title: "Zusammengefasste Quelle", link: a.link, matched_with: a.title, is_legacy: true });
+            tot++;
+          });
+        }
       });
-      const entries = Object.entries(m).sort((a,b)=>b[1].length-a[1].length);
+
+      const entries = Object.entries(m).sort((a,b) => b[1].length - a[1].length);
       el.innerHTML = !entries.length ? '<p style="color:var(--muted);padding:10px 0">Keine Duplikate gefunden.</p>' :
         `<div style="margin-bottom:10px;font-weight:600;color:var(--accent)">Gesamt: ${tot} bereinigte Berichte</div>` +
         entries.map(([src, items], i) => `<div style="border-bottom:1px solid var(--border);padding:6px 0">
@@ -851,6 +912,9 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
       let touchStartX = 0, touchStartY = 0, isPulling = false, touchTargetCard = null, hasVibrated = false;
 
+      const PULL_MIN = 25;
+      const PULL_WORKFLOW = 180;
+
       scroller.addEventListener('touchstart', e => {
         touchStartX = e.touches[0].screenX;
         touchStartY = e.touches[0].screenY;
@@ -865,24 +929,19 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         const diffY = currentY - touchStartY;
         const diffX = currentX - touchStartX;
 
-        // Pull to Refresh aktiv, sobald oben nach unten gezogen wird (> 15px)
-        if(isPulling && diffY > 15 && Math.abs(diffY) > Math.abs(diffX) && scroller.scrollTop <= 0){
+        if(isPulling && diffY > PULL_MIN && Math.abs(diffY) > Math.abs(diffX) && scroller.scrollTop <= 0){
           if(e.cancelable) e.preventDefault();
 
-          // Sichtbare Höhe des Badges sofort auf mindestens 48px setzen
-          const pullDist = Math.min(48 + (diffY - 15) * 0.35, 92);
+          const pullDist = Math.min(48 + (diffY - PULL_MIN) * 0.28, 105);
           ptrBox.style.height = `${pullDist}px`;
 
-          // Stufe 2: Deep Pull (> 80px) -> Workflow starten
-          if(diffY > 80){
-            if(!hasVibrated && navigator.vibrate){ navigator.vibrate(25); hasVibrated = true; }
+          if(diffY >= PULL_WORKFLOW){
+            if(!hasVibrated && navigator.vibrate){ navigator.vibrate(35); hasVibrated = true; }
             ptrContent.classList.add('dispatch');
             ptrIcon.style.transform = 'rotate(180deg)';
             ptrIcon.innerHTML = '🚀';
-            ptrText.textContent = 'Workflow starten (Deep Pull)';
-          } 
-          // Stufe 1: Kurzer Pull (15px bis 80px) -> Lokale Feeds laden
-          else {
+            ptrText.textContent = 'Workflow starten (Loslassen)';
+          } else {
             hasVibrated = false;
             ptrContent.classList.remove('dispatch');
             ptrIcon.style.transform = 'rotate(0deg)';
@@ -899,9 +958,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         const diffY = e.changedTouches[0].screenY - touchStartY;
         const diffX = e.changedTouches[0].screenX - touchStartX;
 
-        if(isPulling && diffY > 20 && scroller.scrollTop <= 0){
-          if(diffY > 80){
-            // Workflow Action
+        if(isPulling && diffY >= PULL_MIN && scroller.scrollTop <= 0){
+          if(diffY >= PULL_WORKFLOW){
             ptrBox.style.height = '48px';
             ptrIcon.innerHTML = '🔄';
             ptrIcon.className = 'ptr-icon spin';
@@ -913,7 +971,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
               ptrContent.classList.remove('dispatch');
             }, 1200);
           } else {
-            // Lokales Nachladen
             ptrBox.style.height = '48px';
             ptrIcon.innerHTML = '🔄';
             ptrIcon.className = 'ptr-icon spin';
@@ -1048,7 +1105,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v10';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v13';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
@@ -1110,7 +1167,18 @@ if __name__ == "__main__":
         if m:
             if r["source"] != m["source"] and r["source"] not in m.setdefault("other_sources", []):
                 m["other_sources"].append(r["source"])
-            m.setdefault("merged_details", []).append({"source": r["source"], "title": r["title"], "link": r["link"], "matched_with": m["title"]})
+
+            if not m.get("image") and r.get("image"):
+                m["image"] = r["image"]
+
+            seen_links = {d.get("link") for d in m.setdefault("merged_details", [])}
+            if r.get("link") and r["link"] not in seen_links and r["link"] != m.get("link"):
+                m["merged_details"].append({
+                    "source": r["source"],
+                    "title": r["title"],
+                    "link": r["link"],
+                    "matched_with": m["title"]
+                })
         else:
             new_items.append(r)
 
