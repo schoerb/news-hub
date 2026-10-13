@@ -38,7 +38,9 @@ STOPWORDS = {
     "neu", "neue", "neues", "neuen", "neuer", "update", "bringt", "startet", "erhält", "offiziell",
     "jetzt", "nach", "zum", "zur", "wie", "auf", "ein", "eine", "einen", "einem", "einer",
     "als", "sich", "nicht", "auch", "über", "test", "bericht", "schlägt", "zeigt", "soll", "gibt",
-    "the", "a", "an", "and", "or", "to", "for", "of", "with", "by", "from", "is", "are", "new", "out"
+    "stellt", "vor", "rollt", "aus", "wird", "werden", "sind", "hat", "haben", "bei", "aus",
+    "the", "a", "an", "and", "or", "to", "for", "of", "with", "by", "from", "is", "are", "new",
+    "out", "now", "gets", "launches", "announces", "reveals", "shows", "first", "more", "into", "on"
 }
 
 # --- Connection Pool ---
@@ -66,6 +68,15 @@ def clean_url(url: str) -> str:
     q = [(k, v) for k, v in urllib.parse.parse_qsl(p.query, keep_blank_values=True)
          if not (k.startswith("utm_") or k in ("wt_mc", "fbclid", "ref", "source"))]
     return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path, urllib.parse.urlencode(q), p.fragment))
+
+
+def normalize_img_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    u = url.strip()
+    if u.startswith("http://"):
+        u = "https://" + u[7:]
+    return u
 
 
 # --- Krypto ---
@@ -121,25 +132,22 @@ def parse_opml():
 
 
 def extract_image(e):
-    bad_markers = ["favicon", "avatar", "logo", "tracking", "1x1", "pixel", "icon", "share-button", "author"]
+    bad_markers = ["favicon", "avatar", "logo", "tracking", "1x1", "pixel", "icon", "share-button", "author", "badge"]
 
-    # 1. Media Tags prüfen
     for k in ("media_content", "media_thumbnail"):
         if e.get(k):
             for item in e[k]:
                 u = item.get("url")
                 if u and not any(b in u.lower() for b in bad_markers):
-                    return u
+                    return normalize_img_url(u)
 
-    # 2. Enclosures prüfen (auch ohne mime-type 'image/')
     for enc in e.get("enclosures", []):
         href = enc.get("href", "")
         enc_type = enc.get("type", "").lower()
         if href and (enc_type.startswith("image/") or any(ext in href.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"])):
             if not any(b in href.lower() for b in bad_markers):
-                return href
+                return normalize_img_url(href)
 
-    # 3. HTML-Content & Summaries prüfen (inklusive data-src und CDN-URLs)
     c = e.get("summary", "")
     if "content" in e and e.content:
         c += " " + e.content[0].get("value", "")
@@ -148,7 +156,7 @@ def extract_image(e):
     if m:
         u = m.group(1).strip()
         if not any(b in u.lower() for b in bad_markers):
-            return u
+            return normalize_img_url(u)
 
     return None
 
@@ -189,17 +197,28 @@ def load_cached_state():
             pass
 
     if not force:
+        loaded_meta = False
         for p in ("public/cache_meta.json", "cache_meta.json"):
             if os.path.exists(p):
                 try:
                     meta = json.load(open(p, "r", encoding="utf-8"))
+                    loaded_meta = True
                     break
                 except Exception:
                     pass
+        if not loaded_meta and REMOTE_META_URL:
+            try:
+                r = session.get(REMOTE_META_URL, timeout=(3.05, 4.0))
+                if r.ok:
+                    meta = r.json()
+            except Exception:
+                pass
 
     for a in arts:
         a["title"] = clean_text(a.get("title", ""))
         a["_ts"] = parse_ts(a.get("published"))
+        if a.get("image"):
+            a["image"] = normalize_img_url(a["image"])
     return arts, meta
 
 
@@ -272,8 +291,9 @@ def fetch_all_feeds(feeds, cache_meta):
 # --- Präzise Deduplizierung ---
 def extract_features(title: str):
     words = re.sub(r"[^\w\s\.]", " ", title.lower()).split()
-    nums = {w for w in words if any(c.isdigit() for c in w) and len(w) >= 2}
-    kws = {w[:-2] if len(w) > 5 and w.endswith(("en", "er", "es")) else w for w in words if w not in STOPWORDS and len(w) > 2 and w not in nums}
+    nums = {w.strip(".") for w in words if any(c.isdigit() for c in w) and len(w.strip(".")) >= 1}
+    kws = {w[:-2] if len(w) > 5 and w.endswith(("en", "er", "es", "ed")) else w
+           for w in words if w not in STOPWORDS and len(w) > 2 and w.strip(".") not in nums}
     return kws, nums
 
 
@@ -281,7 +301,6 @@ def is_dup(t_a: str, t_b: str, feat_a, feat_b) -> bool:
     kw_a, num_a = feat_a
     kw_b, num_b = feat_b
 
-    # Nur bei abweichenden Versions-/Modellnummern early exit
     if num_a and num_b and not (num_a & num_b):
         return False
 
@@ -291,6 +310,10 @@ def is_dup(t_a: str, t_b: str, feat_a, feat_b) -> bool:
     min_len = min(len(kw_a), len(kw_b))
 
     if min_len >= 3 and effective_common >= 3 and (effective_common / min_len) >= DEDUP_OVERLAP:
+        return True
+
+    # Cross-Language Eigennamen + Zahlen Match (z.B. "MacBook Pro M5" + "16")
+    if (num_a & num_b) and effective_common >= 3:
         return True
 
     if effective_common >= 2 and (min(len(t_a), len(t_b)) / max(len(t_a), len(t_b)) >= 0.70):
@@ -322,8 +345,10 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
             others = match.setdefault("other_sources", [])
             if src and src != match.get("source") and src not in others:
                 others.append(src)
+            for osrc in item.get("other_sources", []):
+                if osrc != match.get("source") and osrc not in others:
+                    others.append(osrc)
 
-            # Bild nachziehen, wenn die Primärquelle keines hatte
             if not match.get("image") and item.get("image"):
                 match["image"] = item["image"]
 
@@ -335,6 +360,7 @@ def consolidate_articles(articles: list[dict]) -> list[dict]:
                     "link": item.get("link", ""),
                     "matched_with": match.get("title", "")
                 })
+                seen_links.add(item["link"])
             for det in item.get("merged_details", []):
                 if det.get("link") and det["link"] not in seen_links and det["link"] != match.get("link"):
                     match["merged_details"].append(det)
@@ -441,7 +467,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);
       font-size:1.0rem;line-height:1.2;padding:6px 10px;cursor:pointer;flex-shrink:0;
       display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
-      user-select:none;-webkit-user-select:none;
+      user-select:none;-webkit-user-select:none;gap:4px;
     }
     .btn.active{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
     .btn-open-all{background:var(--accent);border-color:var(--accent);color:#fff;font-size:.85rem;font-weight:600;display:none;white-space:nowrap}
@@ -470,12 +496,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     [data-theme="light"] .stream-header{background:rgba(248,250,252,.65)}
     .header-left{display:flex;align-items:center;gap:12px;flex-shrink:0;min-width:0}
     .header-title-group{display:flex;flex-direction:column;gap:2px}
-    .stream-header h2{font-size:1.15rem;font-weight:700;color:var(--bold);white-space:nowrap}
+    .stream-header h2{font-size:1.15rem;font-weight:700;color:var(--bold);white-space:nowrap;cursor:pointer}
+    .stream-header h2:hover{color:var(--accent)}
     .header-meta{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap}
-    .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:580px;flex-wrap:nowrap}
-    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 140px;min-width:90px;height:34px}
+    .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:620px;flex-wrap:nowrap}
+    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 130px;min-width:80px;height:34px}
     
-    /* Pull to Refresh Box */
     .ptr-box{position:fixed;top:8px;left:0;right:0;height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;z-index:60;pointer-events:none;transition:height .15s ease}
     .ptr-content{background:var(--card);border:1px solid var(--border);border-radius:24px;padding:6px 16px;display:inline-flex;align-items:center;gap:8px;font-size:.82rem;font-weight:600;color:var(--text);box-shadow:0 6px 18px rgba(0,0,0,.4);transition:border-color .15s, color .15s}
     .ptr-content.dispatch{border-color:var(--accent);color:var(--accent)}
@@ -485,10 +511,13 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .feed-card{
       background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;
       display:flex;flex-direction:column;justify-content:space-between;
-      transition:transform .15s ease, background .15s ease;
+      transition:transform .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease;
       content-visibility:auto;contain-intrinsic-size:0 150px;touch-action:pan-y;
     }
     .feed-card:hover{transform:translateY(-2px);background:var(--hover)}
+    .feed-card.kb-focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-dim)}
+    .feed-card.swipe-bm{border-color:#eab308;box-shadow:0 0 12px rgba(234,179,8,.25)}
+    .feed-card.swipe-sh{border-color:var(--link);box-shadow:0 0 12px rgba(96,165,250,.25)}
     .unread-dot-btn{background:none;border:none;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px}
     .unread-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);transition:all .2s}
     .feed-card.seen .unread-dot{background:var(--muted);box-shadow:none;opacity:.55}
@@ -500,6 +529,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .feed-meta{display:flex;align-items:center;gap:6px;font-size:.75rem;margin-bottom:8px;flex-wrap:wrap}
     .feed-source{color:var(--accent);font-weight:600}
     .feed-time,.feed-others{color:var(--muted);font-size:.72rem}
+    .other-src-link{color:var(--muted);text-decoration:underline;text-decoration-color:var(--border);transition:color .15s}
+    .other-src-link:hover{color:var(--link);text-decoration-color:var(--link)}
     .feed-title{font-size:1.02rem;font-weight:600;color:var(--bold);text-decoration:none;line-height:1.4;margin-bottom:8px}
     .feed-title:hover{color:var(--link);text-decoration:underline}
     .feed-summary{font-size:.86rem;color:var(--muted);line-height:1.45;margin-bottom:12px}
@@ -524,8 +555,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       .stream-header h2{font-size:1rem;white-space:normal}
       .header-meta{font-size:.75rem;flex-wrap:wrap}
       .header-right{width:100%;max-width:100%;display:flex;gap:6px;flex-wrap:nowrap;justify-content:space-between}
-      .search-input{flex:1 1 auto;min-width:80px;max-width:none}
-      .btn, .btn-open-all{padding:6px 8px;font-size:.92rem;height:34px}
+      .search-input{flex:1 1 auto;min-width:70px;max-width:none}
+      .btn, .btn-open-all{padding:6px 8px;font-size:.9rem;height:34px}
       .btn-open-all{font-size:.75rem}
       .cards-grid{grid-template-columns:1fr;gap:8px;padding:8px 8px calc(24px + env(safe-area-inset-bottom,0px))}
       .feed-card{padding:14px}
@@ -582,7 +613,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       <div class="header-left">
         <button class="btn" onclick="toggleSidebar()">☰</button>
         <div class="header-title-group">
-          <h2 id="current-title">Meldungen laden...</h2>
+          <h2 id="current-title" onclick="document.getElementById('main-scroller').scrollTo({top:0,behavior:'smooth'})" title="Nach oben scrollen">Meldungen laden...</h2>
           <div class="header-meta">
             <span class="meta-clickable" id="header-dup-info" onclick="openDupModal()">🧹 Duplikate</span>
             <span style="color:var(--border)">•</span>
@@ -593,9 +624,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Durchsuchen..." oninput="filterSearch(this.value)">
         <button class="btn-open-all" id="open-all-btn" onclick="openAllBookmarked()" title="Alle gemerkten Artikel in neuen Tabs öffnen">Alle öffnen ↗</button>
-        <button class="btn" id="saved-filter-btn" onclick="toggleSavedFilter()" title="Später lesen (Lesezeichen)">🔖 <span id="saved-count">0</span></button>
+        <button class="btn" id="unread-filter-btn" onclick="toggleUnreadFilter()" title="Nur ungelesene Artikel anzeigen (Taste: u)">👁️</button>
+        <button class="btn" id="saved-filter-btn" onclick="toggleSavedFilter()" title="Später lesen / Lesezeichen">🔖 <span id="saved-count">0</span></button>
         __DESKTOP_REFRESH_BTN__
-        <button class="btn" onclick="toggleTheme()">🌓</button>
+        <button class="btn" onclick="toggleTheme()" title="Design wechseln">🌓</button>
       </div>
     </div>
     <div id="articles-container" class="cards-grid"></div>
@@ -603,15 +635,16 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   <script>
     window.IS_ARCHIVE = __IS_ARCHIVE__;
     const configuredSources = __CONFIGURED_SOURCES__, feedHealth = __HEALTH_DATA__, buildTime = "__NOW_STR__";
-    let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, sTimer = null, toastTimer = null, pollInterval = null;
+    let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, onlyUnread = false, kbIndex = -1, sTimer = null, toastTimer = null, pollInterval = null;
 
     if('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 
     const hStr = s => { let h = 0; for(let i=0;i<(s||'').length;i++){ h = ((h<<5)-h)+s.charCodeAt(i); h |= 0; } return Math.abs(h); };
+    const escAttr = s => (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     
     const relTime = d => {
       if(!d) return ''; const diff = Math.floor((Date.now() - new Date(d))/1000);
-      return isNaN(diff)?'':diff<60?'gerade':diff<3600?`vor ${Math.floor(diff/60)}m`:diff<86400?`vor ${Math.floor(diff/3600)}h`:`vor ${Math.floor(diff/86400)}d`;
+      return isNaN(diff)?'':diff<60?'gerade':diff<3600?`vor ${Math.floor(diff/60)}m`:`vor ${Math.floor(diff/3600)}h`;
     };
 
     function pad2(n){ return n < 10 ? '0' + n : n; }
@@ -644,6 +677,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     }
     function hideToast(){ clearTimeout(toastTimer); document.getElementById('toast').style.display = 'none'; }
 
+    async function shareCard(btnEl){
+      const card = btnEl.closest('.feed-card');
+      if(!card) return;
+      await shareArticle(card.dataset.title, card.dataset.link);
+    }
+
     async function shareArticle(title, url){
       if(navigator.share){ try { await navigator.share({ title: title, url: url }); } catch(e){} }
       else {
@@ -668,6 +707,13 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       setStorage('bookmarked_news', b);
       updateBookmarkCount();
       if(onlySaved) applyFilters();
+    }
+
+    function toggleUnreadFilter(){
+      onlyUnread = !onlyUnread;
+      const btn = document.getElementById('unread-filter-btn');
+      if(btn) btn.classList.toggle('active', onlyUnread);
+      applyFilters();
     }
 
     function toggleSavedFilter(){
@@ -698,12 +744,24 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const el = document.querySelector(`.feed-card[data-id="${id}"]`);
       if(idx>=0){ r.splice(idx,1); if(el) el.classList.remove('read'); } else { r.push(id); if(el) el.classList.add('read'); }
       setStorage('read_news', r);
+      if(onlyUnread) applyFilters();
     }
 
     function markAllRead(){
       const r = getStorage('read_news');
       document.querySelectorAll('.feed-card').forEach(c => { c.classList.add('read'); if(!r.includes(c.dataset.id)) r.push(c.dataset.id); });
       setStorage('read_news', r);
+      if(onlyUnread) applyFilters();
+    }
+
+    function renderOtherSources(a) {
+      if (!a.other_sources || !a.other_sources.length) return '';
+      const details = a.merged_details || [];
+      const linksHtml = a.other_sources.map(src => {
+        const match = details.find(d => d.source === src && d.link);
+        return match ? `<a href="${escAttr(match.link)}" target="_blank" rel="noopener" class="other-src-link" onclick="event.stopPropagation()">${escAttr(src)}</a>` : escAttr(src);
+      }).join(', ');
+      return `<span class="feed-others">• Auch bei: ${linksHtml}</span>`;
     }
 
     function renderUI(articles){
@@ -723,7 +781,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       const sl = document.getElementById('source-list');
       if(sl) {
         sl.innerHTML = `<li><button class="source-btn active" onclick="filterSource('all',this)"><span>Alle</span><span class="badge">${articles.length}</span></button></li>` +
-          sorted.map(s => `<li><button class="source-btn" onclick="filterSource('${s}',this)"><span>${s}</span><span class="badge">${counts[s]||0}</span></button></li>`).join('');
+          sorted.map(s => `<li><button class="source-btn" onclick="filterSource('${escAttr(s)}',this)"><span>${escAttr(s)}</span><span class="badge">${counts[s]||0}</span></button></li>`).join('');
       }
 
       const rList = getStorage('read_news'), sList = getStorage('seen_news'), bList = getStorage('bookmarked_news');
@@ -734,26 +792,28 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         let htmlBuf = '';
         for(let i = 0; i < articles.length; i++) {
           const a = articles[i];
-          const id = hStr(a.link||''), oth = (a.other_sources&&a.other_sources.length)?`<span class="feed-others">• Auch bei: ${a.other_sources.join(", ")}</span>`:'';
-          const img = a.image ? `<img class="feed-thumb" src="${a.image}" loading="lazy" onerror="this.remove()">` : '';
+          const id = hStr(a.link||''), oth = renderOtherSources(a);
+          const img = a.image ? `<img class="feed-thumb" src="${escAttr(a.image)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : '';
           const cls = (rList.includes(String(id))?' read':'') + (sList.includes(String(id))?' seen':'') + (bList.includes(String(id))?' bookmarked':'');
+          const safeTitle = escAttr(a.title||'Ohne Titel'), safeLink = escAttr(a.link||'#'), safeSrcs = escAttr([a.source||'',...(a.other_sources||[])].join(';;;'));
 
-          htmlBuf += `<article class="feed-card${cls}" data-id="${id}" data-link="${a.link||''}" data-title="${a.title||''}" data-sources="${[a.source||'',...(a.other_sources||[])].join(';;;')}">
+          htmlBuf += `<article class="feed-card${cls}" data-id="${id}" data-link="${safeLink}" data-title="${safeTitle}" data-sources="${safeSrcs}">
             <div class="feed-content">
               <div class="feed-meta">
-                <button class="action-icon-btn bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Merken">🔖</button>
-                <button class="action-icon-btn" onclick="event.stopPropagation();shareArticle('${a.title||''}', '${a.link||''}')" title="Teilen">📤</button>
-                <span class="feed-source">${a.source||'Quelle'}</span>
-                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Gelesen"><span class="unread-dot"></span></button>
+                <button class="action-icon-btn bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Merken (Taste: b)">🔖</button>
+                <button class="action-icon-btn" onclick="event.stopPropagation();shareCard(this)" title="Teilen">📤</button>
+                <span class="feed-source">${escAttr(a.source||'Quelle')}</span>
+                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Gelesen (Taste: m)"><span class="unread-dot"></span></button>
                 <span class="feed-time">${relTime(a.published)}</span>
                 ${oth}
               </div>
-              <a class="feed-title" href="${a.link||'#'}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${a.title||'Ohne Titel'}</a>
+              <a class="feed-title" href="${safeLink}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${safeTitle}</a>
               <p class="feed-summary">${a.summary||''}</p>
             </div>${img}
           </article>`;
         }
         cont.innerHTML = htmlBuf;
+        applyFilters();
       }
     }
 
@@ -783,10 +843,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         `<div style="margin-bottom:10px;font-weight:600;color:var(--accent)">Gesamt: ${tot} bereinigte Berichte</div>` +
         entries.map(([src, items], i) => `<div style="border-bottom:1px solid var(--border);padding:6px 0">
           <div class="modal-row" style="border:none;cursor:pointer" onclick="const e=document.getElementById('dd-${i}');e.style.display=e.style.display==='none'?'block':'none'">
-            <strong>${src}</strong><span class="badge">${items.length} ▾</span>
+            <strong>${escAttr(src)}</strong><span class="badge">${items.length} ▾</span>
           </div>
           <div id="dd-${i}" style="display:none;padding-left:8px;border-left:2px solid var(--accent);margin-top:4px">
-            ${items.map(it=>`<div style="margin-bottom:6px">${it.is_legacy?it.title:`<a href="${it.link}" target="_blank" rel="noopener" style="color:var(--link);text-decoration:none">🔗 ${it.title}</a>`}<div style="color:var(--muted);font-size:.72rem">↳ Mit: "${it.matched_with}"</div></div>`).join('')}
+            ${items.map(it=>`<div style="margin-bottom:6px">${it.is_legacy?escAttr(it.title):`<a href="${escAttr(it.link)}" target="_blank" rel="noopener" style="color:var(--link);text-decoration:none">🔗 ${escAttr(it.title)}</a>`}<div style="color:var(--muted);font-size:.72rem">↳ Mit: "${escAttr(it.matched_with)}"</div></div>`).join('')}
           </div>
         </div>`).join('');
       toggleModal('dup-modal', true);
@@ -802,10 +862,16 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     }
     function filterSearch(q){ clearTimeout(sTimer); sTimer = setTimeout(()=>{ searchQuery = q.toLowerCase().trim(); applyFilters(); }, 100); }
     function applyFilters(){
-      const bList = getStorage('bookmarked_news');
+      const bList = getStorage('bookmarked_news'), rList = getStorage('read_news');
+      kbIndex = -1;
       document.querySelectorAll('.feed-card').forEach(c => {
+        c.classList.remove('kb-focus');
         const id = c.dataset.id;
-        c.style.display = ((!onlySaved || bList.includes(id)) && (activeSource==='all' || (c.dataset.sources||'').split(';;;').includes(activeSource)) && (!searchQuery || c.textContent.toLowerCase().includes(searchQuery))) ? '' : 'none';
+        const show = (!onlySaved || bList.includes(id)) &&
+                     (!onlyUnread || !rList.includes(id)) &&
+                     (activeSource==='all' || (c.dataset.sources||'').split(';;;').includes(activeSource)) &&
+                     (!searchQuery || c.textContent.toLowerCase().includes(searchQuery));
+        c.style.display = show ? '' : 'none';
       });
     }
 
@@ -949,8 +1015,11 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
             ptrText.textContent = 'Lokale Feeds laden';
           }
         } 
-        else if(touchTargetCard && Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 100){
+        else if(touchTargetCard && Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 120){
           touchTargetCard.style.transform = `translateX(${diffX * 0.35}px)`;
+          const ready = Math.abs(diffX) > 60 && Math.abs(diffX) > Math.abs(diffY) * 1.4;
+          touchTargetCard.classList.toggle('swipe-sh', ready && diffX > 0);
+          touchTargetCard.classList.toggle('swipe-bm', ready && diffX < 0);
         }
       }, {passive:false});
 
@@ -988,6 +1057,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
         if(touchTargetCard){
           touchTargetCard.style.transform = '';
+          touchTargetCard.classList.remove('swipe-sh', 'swipe-bm');
           if(Math.abs(diffX) > 60 && Math.abs(diffX) > Math.abs(diffY) * 1.4){
             if(diffX > 0) shareArticle(touchTargetCard.dataset.title, touchTargetCard.dataset.link);
             else toggleBookmark(touchTargetCard.dataset.id);
@@ -1074,7 +1144,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         if(hl) {
           hl.innerHTML = feedHealth.map(f => {
             const ok = f.status==='ok'||f.code===304||f.code===200;
-            return `<div class="modal-row"><span>${ok?'🟢':'🔴'} ${f.title}</span><span style="color:${ok?'var(--muted)':'#ef4444'};font-family:monospace">${f.code||f.status}</span></div>`;
+            return `<div class="modal-row"><span>${ok?'🟢':'🔴'} ${escAttr(f.title)}</span><span style="color:${ok?'var(--muted)':'#ef4444'};font-family:monospace">${f.code||f.status}</span></div>`;
           }).join('');
         }
       } catch(err) {
@@ -1092,11 +1162,35 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     });
 
     document.addEventListener('keydown', e => {
-      if(document.activeElement === document.getElementById('search-box')) return;
+      if(['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+        if(e.key==='Escape') document.activeElement.blur();
+        return;
+      }
       if(e.key==='[') toggleSidebar();
       if(e.key==='r') triggerWorkflow();
+      if(e.key==='u') toggleUnreadFilter();
       if(e.key==='/'){ e.preventDefault(); document.getElementById('search-box').focus(); }
       if(e.key==='Escape'){ toggleModal('health-modal',false); toggleModal('dup-modal',false); hideToast(); }
+
+      const visibleCards = Array.from(document.querySelectorAll('.feed-card')).filter(c => c.style.display !== 'none');
+      if(!visibleCards.length) return;
+
+      if(e.key==='j' || e.key==='k'){
+        e.preventDefault();
+        visibleCards.forEach(c => c.classList.remove('kb-focus'));
+        kbIndex = e.key==='j' ? Math.min(kbIndex + 1, visibleCards.length - 1) : Math.max(kbIndex - 1, 0);
+        const active = visibleCards[kbIndex];
+        if(active){
+          active.classList.add('kb-focus');
+          active.scrollIntoView({behavior:'smooth', block:'nearest'});
+        }
+      } else if(kbIndex >= 0 && kbIndex < visibleCards.length){
+        const active = visibleCards[kbIndex];
+        const id = active.dataset.id;
+        if(e.key==='o'){ window.open(active.dataset.link, '_blank'); if(!getStorage('read_news').includes(id)) toggleRead(id); }
+        if(e.key==='m') toggleRead(id);
+        if(e.key==='b') toggleBookmark(id);
+      }
     });
 
     document.addEventListener('DOMContentLoaded', init);
@@ -1105,7 +1199,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v13';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v15';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
@@ -1137,7 +1231,7 @@ def render_page(feed_health, feeds, is_archive=False):
                          .replace("__NAV_TARGET_URL__", "index.html" if is_archive else "archive.html") \
                          .replace("__NAV_TARGET_TEXT__", "← Zum Live-Feed" if is_archive else "📑 Zum Archiv (24–48h)") \
                          .replace("__MARK_ALL_BTN__", "" if is_archive else '<button class="source-btn" style="text-align:center;background:var(--border)" onclick="markAllRead()">✓ Alle gelesen</button>') \
-                         .replace("__DESKTOP_REFRESH_BTN__", "" if is_archive else '<button class="btn" id="refresh-btn" onclick="triggerWorkflow()" title="GitHub Workflow starten">🔄</button>') \
+                         .replace("__DESKTOP_REFRESH_BTN__", "" if is_archive else '<button class="btn" id="refresh-btn" onclick="triggerWorkflow()" title="GitHub Workflow starten (Taste: r)">🔄</button>') \
                          .replace("__NOW_STR__", now_str) \
                          .replace("__HEALTH_BLOCK__", h_text) \
                          .replace("__HEALTH_DATA__", json.dumps(feed_health, ensure_ascii=False)) \
