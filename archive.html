@@ -61,8 +61,8 @@
     .stream-header h2{font-size:1.15rem;font-weight:700;color:var(--bold);white-space:nowrap;cursor:pointer}
     .stream-header h2:hover{color:var(--accent)}
     .header-meta{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap}
-    .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:620px;flex-wrap:nowrap}
-    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 130px;min-width:80px;height:34px}
+    .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:640px;flex-wrap:nowrap}
+    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 120px;min-width:70px;height:34px}
     
     .ptr-box{position:fixed;top:8px;left:0;right:0;height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;z-index:60;pointer-events:none;transition:height .15s ease}
     .ptr-content{background:var(--card);border:1px solid var(--border);border-radius:24px;padding:6px 16px;display:inline-flex;align-items:center;gap:8px;font-size:.82rem;font-weight:600;color:var(--text);box-shadow:0 6px 18px rgba(0,0,0,.4);transition:border-color .15s, color .15s}
@@ -79,7 +79,7 @@
     .feed-card:hover{transform:translateY(-2px);background:var(--hover)}
     .feed-card.kb-focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-dim)}
     .feed-card.swipe-bm{border-color:#eab308;box-shadow:0 0 12px rgba(234,179,8,.25)}
-    .feed-card.swipe-sh{border-color:var(--link);box-shadow:0 0 12px rgba(96,165,250,.25)}
+    .feed-card.swipe-sh{border-color:#60a5fa;box-shadow:0 0 12px rgba(96,165,250,.25)}
     .unread-dot-btn{background:none;border:none;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px}
     .unread-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);transition:all .2s}
     .feed-card.seen .unread-dot{background:var(--muted);box-shadow:none;opacity:.55}
@@ -117,8 +117,8 @@
       .stream-header h2{font-size:1rem;white-space:normal}
       .header-meta{font-size:.75rem;flex-wrap:wrap}
       .header-right{width:100%;max-width:100%;display:flex;gap:6px;flex-wrap:nowrap;justify-content:space-between}
-      .search-input{flex:1 1 auto;min-width:70px;max-width:none}
-      .btn, .btn-open-all{padding:6px 8px;font-size:.9rem;height:34px}
+      .search-input{flex:1 1 auto;min-width:60px;max-width:none}
+      .btn, .btn-open-all{padding:6px 8px;font-size:.85rem;height:34px}
       .btn-open-all{font-size:.75rem}
       .cards-grid{grid-template-columns:1fr;gap:8px;padding:8px 8px calc(24px + env(safe-area-inset-bottom,0px))}
       .feed-card{padding:14px}
@@ -186,7 +186,7 @@
       <div class="header-right">
         <input type="search" class="search-input" id="search-box" placeholder="Durchsuchen..." oninput="filterSearch(this.value)">
         <button class="btn-open-all" id="open-all-btn" onclick="openAllBookmarked()" title="Alle gemerkten Artikel in neuen Tabs öffnen">Alle öffnen ↗</button>
-        <button class="btn" id="unread-filter-btn" onclick="toggleUnreadFilter()" title="Nur ungelesene Artikel anzeigen (Taste: u)">👁️</button>
+        <button class="btn" id="unread-filter-btn" onclick="toggleUnreadFilter()" title="Nur ungesehene Artikel anzeigen (Taste: u)">👁️ <span id="unread-count">0</span></button>
         <button class="btn" id="saved-filter-btn" onclick="toggleSavedFilter()" title="Später lesen / Lesezeichen">🔖 <span id="saved-count">0</span></button>
         
         <button class="btn" onclick="toggleTheme()" title="Design wechseln">🌓</button>
@@ -196,12 +196,23 @@
   </main>
   <script>
     window.IS_ARCHIVE = true;
-    const configuredSources = ["ComputerBase", "OMG! Ubuntu!", "9to5Google", "Topthemen - SZ.de", "WinFuture News", "GoogleWatchBlog", "mobiFlip", "Android Headlines", "Android Police", "teltarif.de", "Düsseldorf | RP ONLINE", "Caschys Blog", "Notebookcheck.com", "Deskmodder.de", "heise online News", "Android Authority", "XDA", "Travel-Dealz.de", "SmartDroid.de", "Aktuell - FAZ.NET", "Android Sage", "9to5Linux"], feedHealth = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 200}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "error", "code": 403}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 200}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "exception", "code": "timeout"}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 200}, {"title": "SmartDroid.de", "status": "ok", "code": 200}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 200}, {"title": "9to5Linux", "status": "exception", "code": "timeout"}], buildTime = "16.10.2026 14:12";
+    const configuredSources = ["ComputerBase", "OMG! Ubuntu!", "9to5Google", "Topthemen - SZ.de", "WinFuture News", "GoogleWatchBlog", "mobiFlip", "Android Headlines", "Android Police", "teltarif.de", "Düsseldorf | RP ONLINE", "Caschys Blog", "Notebookcheck.com", "Deskmodder.de", "heise online News", "Android Authority", "XDA", "Travel-Dealz.de", "SmartDroid.de", "Aktuell - FAZ.NET", "Android Sage", "9to5Linux"], feedHealth = [{"title": "ComputerBase", "status": "ok", "code": 200}, {"title": "OMG! Ubuntu!", "status": "ok", "code": 200}, {"title": "9to5Google", "status": "ok", "code": 200}, {"title": "Topthemen - SZ.de", "status": "ok", "code": 200}, {"title": "WinFuture News", "status": "error", "code": 403}, {"title": "GoogleWatchBlog", "status": "ok", "code": 200}, {"title": "mobiFlip", "status": "ok", "code": 200}, {"title": "Android Headlines", "status": "ok", "code": 200}, {"title": "Android Police", "status": "ok", "code": 200}, {"title": "teltarif.de", "status": "ok", "code": 200}, {"title": "Düsseldorf | RP ONLINE", "status": "ok", "code": 200}, {"title": "Caschys Blog", "status": "ok", "code": 200}, {"title": "Notebookcheck.com", "status": "ok", "code": 200}, {"title": "Deskmodder.de", "status": "exception", "code": "timeout"}, {"title": "heise online News", "status": "ok", "code": 200}, {"title": "Android Authority", "status": "ok", "code": 200}, {"title": "XDA", "status": "ok", "code": 200}, {"title": "Travel-Dealz.de", "status": "ok", "code": 200}, {"title": "SmartDroid.de", "status": "ok", "code": 200}, {"title": "Aktuell - FAZ.NET", "status": "ok", "code": 200}, {"title": "Android Sage", "status": "ok", "code": 200}, {"title": "9to5Linux", "status": "exception", "code": "timeout"}], buildTime = "16.10.2026 15:40";
     let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, onlyUnread = false, kbIndex = -1, sTimer = null, toastTimer = null, pollInterval = null;
 
     if('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 
-    const hStr = s => { let h = 0; for(let i=0;i<(s||'').length;i++){ h = ((h<<5)-h)+s.charCodeAt(i); h |= 0; } return Math.abs(h); };
+    const hStr = s => {
+      let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+      for (let i = 0, ch; i < (s || '').length; i++) {
+        ch = s.charCodeAt(i);
+        h1 = Math.imul(h1 ^ ch, 2654435761);
+        h2 = Math.imul(h2 ^ ch, 1597334677);
+      }
+      h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+      h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+      return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+    };
+
     const escAttr = s => (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     
     const relTime = d => {
@@ -261,6 +272,17 @@
       if(openBtn) openBtn.style.display = (onlySaved && b.length > 0) ? 'inline-flex' : 'none';
     }
 
+    function updateUnreadCount(){
+      const rList = getStorage('read_news'), sList = getStorage('seen_news');
+      let unread = 0;
+      document.querySelectorAll('.feed-card').forEach(c => {
+        const id = c.dataset.id;
+        if(!rList.includes(id) && !sList.includes(id)) unread++;
+      });
+      const el = document.getElementById('unread-count');
+      if(el) el.textContent = unread;
+    }
+
     function toggleBookmark(id){
       let b = getStorage('bookmarked_news'); const idx = b.indexOf(id);
       const el = document.querySelector(`.feed-card[data-id="${id}"]`);
@@ -294,25 +316,47 @@
       const toOpen = liveArticles.filter(a => bList.includes(String(hStr(a.link||''))));
       if(!toOpen.length) return;
       toOpen.forEach(a => window.open(a.link, '_blank'));
-      const r = getStorage('read_news');
-      toOpen.forEach(a => { const id = String(hStr(a.link||'')); if(!r.includes(id)) r.push(id); });
-      setStorage('read_news', r); setStorage('bookmarked_news', []);
-      document.querySelectorAll('.feed-card.bookmarked').forEach(c => { c.classList.remove('bookmarked'); c.classList.add('read'); });
-      updateBookmarkCount(); showToast(`🚀 ${toOpen.length} Artikel geöffnet.`, 3000); toggleSavedFilter();
+      const r = getStorage('read_news'), s = getStorage('seen_news');
+      toOpen.forEach(a => {
+        const id = String(hStr(a.link||''));
+        if(!r.includes(id)) r.push(id);
+        if(!s.includes(id)) s.push(id);
+      });
+      setStorage('read_news', r); setStorage('seen_news', s); setStorage('bookmarked_news', []);
+      document.querySelectorAll('.feed-card.bookmarked').forEach(c => { c.classList.remove('bookmarked'); c.classList.add('read', 'seen'); });
+      updateBookmarkCount(); updateUnreadCount(); showToast(`🚀 ${toOpen.length} Artikel geöffnet.`, 3000); toggleSavedFilter();
     }
 
     function toggleRead(id){
-      let r = getStorage('read_news'); const idx = r.indexOf(id);
+      let r = getStorage('read_news'), s = getStorage('seen_news');
       const el = document.querySelector(`.feed-card[data-id="${id}"]`);
-      if(idx>=0){ r.splice(idx,1); if(el) el.classList.remove('read'); } else { r.push(id); if(el) el.classList.add('read'); }
+      const isMarked = r.includes(id) || s.includes(id);
+
+      if(isMarked){
+        r = r.filter(x => x !== id);
+        s = s.filter(x => x !== id);
+        if(el) el.classList.remove('read', 'seen');
+      } else {
+        r.push(id);
+        if(!s.includes(id)) s.push(id);
+        if(el) el.classList.add('read', 'seen');
+      }
       setStorage('read_news', r);
+      setStorage('seen_news', s);
+      updateUnreadCount();
       if(onlyUnread) applyFilters();
     }
 
     function markAllRead(){
-      const r = getStorage('read_news');
-      document.querySelectorAll('.feed-card').forEach(c => { c.classList.add('read'); if(!r.includes(c.dataset.id)) r.push(c.dataset.id); });
+      const r = getStorage('read_news'), s = getStorage('seen_news');
+      document.querySelectorAll('.feed-card').forEach(c => {
+        c.classList.add('read', 'seen');
+        if(!r.includes(c.dataset.id)) r.push(c.dataset.id);
+        if(!s.includes(c.dataset.id)) s.push(c.dataset.id);
+      });
       setStorage('read_news', r);
+      setStorage('seen_news', s);
+      updateUnreadCount();
       if(onlyUnread) applyFilters();
     }
 
@@ -355,7 +399,7 @@
         for(let i = 0; i < articles.length; i++) {
           const a = articles[i];
           const id = hStr(a.link||''), oth = renderOtherSources(a);
-          const img = a.image ? `<img class="feed-thumb" src="${escAttr(a.image)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : '';
+          const img = a.image ? `<img class="feed-thumb" src="${escAttr(a.image)}" loading="lazy" referrerpolicy="no-referrer" onload="if(this.naturalWidth<80||this.naturalHeight<60)this.remove()" onerror="this.remove()">` : '';
           const cls = (rList.includes(String(id))?' read':'') + (sList.includes(String(id))?' seen':'') + (bList.includes(String(id))?' bookmarked':'');
           const safeTitle = escAttr(a.title||'Ohne Titel'), safeLink = escAttr(a.link||'#'), safeSrcs = escAttr([a.source||'',...(a.other_sources||[])].join(';;;'));
 
@@ -365,7 +409,7 @@
                 <button class="action-icon-btn bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Merken (Taste: b)">🔖</button>
                 <button class="action-icon-btn" onclick="event.stopPropagation();shareCard(this)" title="Teilen">📤</button>
                 <span class="feed-source">${escAttr(a.source||'Quelle')}</span>
-                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Gelesen (Taste: m)"><span class="unread-dot"></span></button>
+                <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Status umschalten (Taste: m)"><span class="unread-dot"></span></button>
                 <span class="feed-time">${relTime(a.published)}</span>
                 ${oth}
               </div>
@@ -375,6 +419,7 @@
           </article>`;
         }
         cont.innerHTML = htmlBuf;
+        updateUnreadCount();
         applyFilters();
       }
     }
@@ -424,17 +469,19 @@
     }
     function filterSearch(q){ clearTimeout(sTimer); sTimer = setTimeout(()=>{ searchQuery = q.toLowerCase().trim(); applyFilters(); }, 100); }
     function applyFilters(){
-      const bList = getStorage('bookmarked_news'), rList = getStorage('read_news');
+      const bList = getStorage('bookmarked_news'), rList = getStorage('read_news'), sList = getStorage('seen_news');
       kbIndex = -1;
       document.querySelectorAll('.feed-card').forEach(c => {
         c.classList.remove('kb-focus');
         const id = c.dataset.id;
+        const hasGreenDot = !rList.includes(id) && !sList.includes(id);
         const show = (!onlySaved || bList.includes(id)) &&
-                     (!onlyUnread || !rList.includes(id)) &&
+                     (!onlyUnread || hasGreenDot) &&
                      (activeSource==='all' || (c.dataset.sources||'').split(';;;').includes(activeSource)) &&
                      (!searchQuery || c.textContent.toLowerCase().includes(searchQuery));
         c.style.display = show ? '' : 'none';
       });
+      updateUnreadCount();
     }
 
     function triggerWorkflow(){
@@ -681,7 +728,11 @@
             if(e.isIntersecting){
               timers.set(id, setTimeout(() => {
                 const s = getStorage('seen_news');
-                if(!s.includes(id)){ s.push(id); setStorage('seen_news', s); }
+                if(!s.includes(id)){
+                  s.push(id);
+                  setStorage('seen_news', s);
+                  updateUnreadCount();
+                }
                 e.target.classList.add('seen');
                 obs.unobserve(e.target);
               }, 1000));
