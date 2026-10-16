@@ -10,17 +10,16 @@ Gehostet via **GitHub Pages**, vollautomatisiert über **GitHub Actions**.
 
 - **Automatisierte Feed-Verarbeitung & Remote-Cache:** Liest Feeds per OPML ein und synchronisiert `cache_meta.json` (`ETag` / `Last-Modified`) automatisch mit GitHub Pages für extrem schnelle `304 Not Modified`-Abfragen.
 - **KI-Zusammenfassung & Übersetzung:** Nutzt die Google Gemini API, um fremdsprachige Artikel ins Deutsche zu übersetzen und auf genau einen Satz mit prägnanten Fettungen einzudampfen.
-- **Smarte Bildextraktion & Hotlink-Schutz:** Erkennt Bilder aus `media:content`, Enclosures sowie modernen HTML-Tags (`data-src`, `data-original`, CDN-URLs), hebt `http://`-Links automatisch auf `https://` an, nutzt `no-referrer` gegen Hotlink-Blockaden und übernimmt Bilder bei Duplikaten von Zweitquellen.
+- **Smarte Bildextraktion & Hotlink-Schutz:** Erkennt Bilder aus `media:content`, Enclosures sowie modernen HTML-Tags (`data-src`, `data-original`, CDN-URLs), filtert Tracker, Logos und Avatare aus, werten Bild-URLs direkt über Gemini aus und blenden fehlerhafte oder winzige Vorschaubilder (< 80px) im Browser automatisch aus.
 - **Präzise Cross-Language Deduplizierung:** Verhindert Fehlverschmelzungen bei Versions-/Modellnummern (z. B. *iPhone 16* vs. *Galaxy 16GB*) durch mehrsprachigen Keyword-Overlap und `SequenceMatcher`.
 - **Klickbare Zweitquellen:** Unter zusammengeführten Artikeln (`• Auch bei: ...`) sind alle weiteren Quellen direkt mit ihren jeweiligen Original-Artikeln verlinkt.
-- **Ungelesen- & Lesezeichen-Filter:** Per Klick auf `👁️` (oder Taste `u`) lassen sich gelesene Artikel komplett ausblenden. Gespeicherte Artikel (`🔖`) können gesammelt in neuen Tabs geöffnet werden.
+- **Ungelesen- & Lesezeichen-Filter (mit Live-Zähler):** Per Klick auf `👁️` (oder Taste `u`) lassen sich gelesene/gesehene Artikel komplett ausblenden. Der Button zeigt dynamisch die Anzahl der verbleibenden neuen Artikel mit grünem Punkt an.
 - **Zweistufiges Pull-to-Refresh (Mobile):**
   - **Kurzer Zug (25px–179px):** Lädt lautlos die lokale `data.json` nach (`↓ Lokale Feeds laden`).
   - **Tiefer Zug (ab 180px):** Schaltet mit haptischem Feedback (Vibration) um und triggert den entfernten GitHub Actions Workflow (`🚀 Workflow starten`).
-  - Blockiert das native Browser-Pull-to-Refresh verlässlich via `overscroll-behavior-y: none`.
 - **Workflow-Trigger & Live-Polling:** Button `🔄` in der Navigation startet direkt den GitHub Actions Dispatch und pollt live den Build-Status.
 - **Ende-zu-Ende-Verschlüsselung:** Verschlüsselt die generierte `data.json` via AES-CBC (OpenSSL-kompatibel), falls ein Seitenpasswort vergeben ist.
-- **Progressive Web App (PWA):** Offline-Fallback dank Service Worker (`news-hub-v15`) mit Network-First-Strategie für Daten und HTML.
+- **Progressive Web App (PWA):** Offline-Fallback dank Service Worker (`news-hub-v18`) mit Network-First-Strategie für Daten und HTML.
 - **Stundengenaue Zeitangaben & Archiv:** Zeigt das Alter von Artikeln ab 60 Minuten durchgehend in Stunden an (`vor Xh`) und trennt automatisch zwischen Live-Feed (letzte 24h) und Archiv (24–48h).
 
 ---
@@ -55,9 +54,7 @@ Um den Workflow direkt aus der Web-App heraus neu zu starten (über `🔄` oder 
    `export GEMINI_API_KEY="dein-api-key"`
    `export PAGE_PASSWORD="optionales-passwort"`
 3. Build ausführen: `python3 build_pages.py`
-4. Lokalen Webserver starten: `cd public && python3 -m http.server 8000`
-
-Anschließend im Browser `http://localhost:8000` aufrufen.
+4. Lokalen Webserver starten: `public` Ordner aufrufen via `python3 -m http.server 8000`
 
 ---
 
@@ -73,9 +70,9 @@ Anschließend im Browser `http://localhost:8000` aufrufen.
 - **Tastatur-Navigation (Desktop):**
   - `j` / `k`: Nächster / Vorheriger Artikel (mit grünem Fokus-Rahmen).
   - `o`: Ausgewählten Artikel im neuen Tab öffnen und als gelesen markieren.
-  - `m`: Ausgewählten Artikel als gelesen / ungelesen markieren.
+  - `m`: Ausgewählten Artikel als gelesen / ungelesen umschalten.
   - `b`: Lesezeichen für ausgewählten Artikel umschalten.
-  - `u`: Filter „Nur Ungelesene“ (`👁️`) ein-/ausschalten.
+  - `u`: Filter „Nur ungesehene Artikel“ (`👁️` mit Live-Zähler) ein-/ausschalten.
   - `r`: GitHub Workflow neu anstoßen.
   - `[`: Seitenleiste ein-/ausklappen.
   - `/`: Suchfeld fokussieren.
