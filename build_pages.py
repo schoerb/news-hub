@@ -15,7 +15,10 @@ from difflib import SequenceMatcher
 
 warnings.filterwarnings("ignore", category=UserWarning, module="google.genai")
 
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import feedparser
 from google import genai
 from google.genai import types
@@ -94,7 +97,30 @@ def normalize_img_url(url: str | None) -> str | None:
     return u
 
 
-# --- Krypto ---
+def pick_best_from_srcset(srcset: str) -> str | None:
+    if not srcset:
+        return None
+    candidates = []
+    for part in srcset.split(","):
+        tokens = part.strip().split()
+        if not tokens:
+            continue
+        url = normalize_img_url(tokens[0])
+        if not url:
+            continue
+        width = 0
+        if len(tokens) > 1 and tokens[1].endswith("w") and tokens[1][:-1].isdigit():
+            width = int(tokens[1][:-1])
+        candidates.append((width, url))
+    if not candidates:
+        return None
+    ideal = [c for c in candidates if 500 <= c[0] <= 1200]
+    if ideal:
+        return sorted(ideal, key=lambda x: x[0])[0][1]
+    return sorted(candidates, key=lambda x: x[0], reverse=True)[0][1]
+
+
+# --- Moderne Krypto (WebCrypto-kompatibles AES-GCM + Legacy Fallback) ---
 def openssl_kdf(pw: bytes, salt: bytes, klen=32, ivlen=16) -> tuple[bytes, bytes]:
     d = b""
     while len(d) < (klen + ivlen):
@@ -102,25 +128,35 @@ def openssl_kdf(pw: bytes, salt: bytes, klen=32, ivlen=16) -> tuple[bytes, bytes
     return d[:klen], d[klen:klen + ivlen]
 
 
+def derive_gcm_key(pw: str, salt: bytes) -> bytes:
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=100000)
+    return kdf.derive(pw.encode("utf-8"))
+
+
 def encrypt_payload(data: str, pw: str) -> str:
     if not pw:
         return data
-    salt = os.urandom(8)
-    key, iv = openssl_kdf(pw.encode(), salt)
-    pad = 16 - (len(data.encode()) % 16)
-    c = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
-    return base64.b64encode(b"Salted__" + salt + c.update(data.encode() + bytes([pad] * pad)) + c.finalize()).decode()
+    salt = os.urandom(16)
+    iv = os.urandom(12)
+    key = derive_gcm_key(pw, salt)
+    ct = AESGCM(key).encrypt(iv, data.encode("utf-8"), None)
+    return "GCM1:" + base64.b64encode(salt + iv + ct).decode("ascii")
 
 
 def decrypt_payload(enc: str, pw: str) -> str:
     if not pw:
         return enc
     try:
+        if enc.startswith("GCM1:"):
+            raw = base64.b64decode(enc[5:])
+            salt, iv, ct = raw[:16], raw[16:28], raw[28:]
+            key = derive_gcm_key(pw, salt)
+            return AESGCM(key).decrypt(iv, ct, None).decode("utf-8")
         raw = base64.b64decode(enc)
         if not raw.startswith(b"Salted__"):
             return enc
         key, iv = openssl_kdf(pw.encode(), raw[8:16])
-        c = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+        c = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
         d = c.update(raw[16:]) + c.finalize()
         return d[:-d[-1]].decode("utf-8")
     except Exception:
@@ -179,6 +215,12 @@ def extract_image(e):
             continue
         if any(cls in tag.lower() for cls in ["wp-smiley", "emoji", "avatar", "author", "icon"]):
             continue
+
+        srcset_m = re.search(r'\b(?:data-srcset|srcset)=["\']([^"\']+)["\']', tag, re.I)
+        if srcset_m:
+            best_u = pick_best_from_srcset(srcset_m.group(1))
+            if best_u:
+                return best_u
 
         src_m = re.search(r'\b(?:data-src|data-original|src)=["\']([^\s"\'<>]+)["\']', tag, re.I)
         if src_m:
@@ -258,28 +300,36 @@ def fetch_all_feeds(feeds, cache_meta):
     def _fetch(f):
         url, key = f["url"], hash_feed(f["url"])
         headers = {}
-        if key in cache_meta:
-            if "etag" in cache_meta[key]:
-                headers["If-None-Match"] = cache_meta[key]["etag"]
-            if "modified" in cache_meta[key]:
-                headers["If-Modified-Since"] = cache_meta[key]["modified"]
+        entry_meta = dict(cache_meta.get(key, {}))
+        fails = entry_meta.get("fails", 0)
+
+        if "etag" in entry_meta:
+            headers["If-None-Match"] = entry_meta["etag"]
+        if "modified" in entry_meta:
+            headers["If-Modified-Since"] = entry_meta["modified"]
+
+        read_timeout = 2.0 if fails >= 3 else 5.0
+
         try:
             p = urllib.parse.urlsplit(url)
             if p.scheme and p.netloc:
                 headers["Referer"] = f"{p.scheme}://{p.netloc}/"
-            r = session.get(url, headers=headers, timeout=(3.05, 5.0))
+            r = session.get(url, headers=headers, timeout=(2.5, read_timeout))
             if r.status_code == 304:
+                entry_meta["fails"] = 0
+                new_meta[key] = entry_meta
                 return [], {"title": f["title"], "status": "ok", "code": 304}
             if not r.ok:
+                entry_meta["fails"] = fails + 1
+                new_meta[key] = entry_meta
                 return [], {"title": f["title"], "status": "error", "code": r.status_code}
 
-            m = {}
+            entry_meta["fails"] = 0
             if "etag" in r.headers:
-                m["etag"] = r.headers["etag"]
+                entry_meta["etag"] = r.headers["etag"]
             if "last-modified" in r.headers:
-                m["modified"] = r.headers["last-modified"]
-            if m:
-                new_meta[key] = m
+                entry_meta["modified"] = r.headers["last-modified"]
+            new_meta[key] = entry_meta
 
             parsed = feedparser.parse(r.content)
             if parsed.bozo and not parsed.entries:
@@ -306,6 +356,8 @@ def fetch_all_feeds(feeds, cache_meta):
                     })
             return items, {"title": f["title"], "status": "ok", "code": r.status_code}
         except Exception:
+            entry_meta["fails"] = fails + 1
+            new_meta[key] = entry_meta
             return [], {"title": f["title"], "status": "exception", "code": "timeout"}
 
     all_items = []
@@ -471,7 +523,7 @@ def summarize_delta_with_gemini(items):
     return res
 
 
-# --- Frontend Template ---
+# --- Frontend Template (100% Native WebCrypto, kein externes CryptoJS mehr) ---
 PAGE_TEMPLATE = """<!DOCTYPE html>
 <html lang="de" data-theme="dark">
 <head>
@@ -480,7 +532,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   <meta name="mobile-web-app-capable" content="yes"><meta name="theme-color" content="#121418">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
   <style>
     :root{--bg:#121418;--sidebar:#181b20;--card:#1e2229;--hover:#262b34;--border:#2e3440;--text:#e2e8f0;--muted:#94a3b8;--bold:#f1f5f9;--accent:#2ecc71;--accent-dim:rgba(46,204,113,.15);--link:#60a5fa}
     [data-theme="light"]{--bg:#f8fafc;--sidebar:#fff;--card:#fff;--hover:#f1f5f9;--border:#e2e8f0;--text:#1e293b;--muted:#64748b;--bold:#0f172a;--accent:#16a34a;--accent-dim:rgba(22,163,74,.12);--link:#2563eb}
@@ -513,10 +564,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .sidebar.collapsed{width:0!important;border:none!important;visibility:hidden}
     .sidebar-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
     .source-list{list-style:none;padding:12px;overflow-y:auto;flex-grow:1}
-    .source-btn{width:100%;text-align:left;padding:10px 14px;margin-bottom:4px;border-radius:6px;background:transparent;border:none;color:var(--muted);font-size:.85rem;font-weight:500;cursor:pointer;display:flex;justify-content:space-between;align-items:center}
+    .source-btn{width:100%;text-align:left;padding:10px 14px;margin-bottom:4px;border-radius:6px;background:transparent;border:none;color:var(--muted);font-size:.85rem;font-weight:500;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px}
     .source-btn:hover,.source-btn.active{background:var(--accent-dim);color:var(--accent);font-weight:600}
-    .badge{background:var(--border);padding:2px 8px;border-radius:12px;font-size:.7rem;color:var(--text)}
-    .source-btn.active .badge{background:var(--accent);color:#fff}
+    .badge-group{display:inline-flex;align-items:center;gap:4px}
+    .badge{background:var(--border);padding:2px 7px;border-radius:10px;font-size:.7rem;color:var(--muted);font-weight:500}
+    .badge-new{background:var(--accent);color:#fff;font-weight:700}
+    .source-btn.active .badge{background:rgba(255,255,255,.15);color:var(--text)}
     .sidebar-footer{padding:16px;border-top:1px solid var(--border)}
     .nav-link{display:block;text-align:center;color:var(--accent);text-decoration:none;font-size:.82rem;font-weight:600;padding:8px;border-radius:6px;background:var(--accent-dim);margin-bottom:8px}
     
@@ -535,8 +588,13 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .stream-header h2{font-size:1.15rem;font-weight:700;color:var(--bold);white-space:nowrap;cursor:pointer}
     .stream-header h2:hover{color:var(--accent)}
     .header-meta{display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap}
-    .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:640px;flex-wrap:nowrap}
-    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;font-size:.85rem;outline:none;flex:1 1 120px;min-width:70px;height:34px}
+    .header-right{display:flex;align-items:center;gap:6px;flex-grow:1;justify-content:flex-end;max-width:680px;flex-wrap:nowrap}
+    .search-wrap{position:relative;flex:1 1 120px;min-width:65px;display:flex;align-items:center}
+    .search-input{background:var(--card);border:1px solid var(--border);color:var(--text);padding:6px 26px 6px 10px;border-radius:6px;font-size:.85rem;outline:none;width:100%;height:34px}
+    .search-input:focus{border-color:var(--accent)}
+    .search-clear{position:absolute;right:6px;background:none;border:none;color:var(--muted);font-size:1.05rem;cursor:pointer;display:none;padding:0 4px;line-height:1}
+    .search-clear:hover{color:var(--text)}
+    mark.hl{background:rgba(234,179,8,.28);color:var(--bold);border-radius:3px;padding:0 2px}
     
     .ptr-box{position:fixed;top:8px;left:0;right:0;height:0;overflow:hidden;display:flex;align-items:center;justify-content:center;z-index:60;pointer-events:none;transition:height .15s ease}
     .ptr-content{background:var(--card);border:1px solid var(--border);border-radius:24px;padding:6px 16px;display:inline-flex;align-items:center;gap:8px;font-size:.82rem;font-weight:600;color:var(--text);box-shadow:0 6px 18px rgba(0,0,0,.4);transition:border-color .15s, color .15s}
@@ -544,6 +602,11 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     .ptr-icon{display:inline-block;transition:transform .15s ease}
 
     .cards-grid{padding:14px 16px calc(24px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
+    .seen-divider{
+      grid-column:1 / -1;display:flex;align-items:center;gap:12px;color:var(--muted);
+      font-size:.76rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin:6px 0;
+    }
+    .seen-divider::before, .seen-divider::after{content:"";flex:1;height:1px;background:var(--border)}
     .feed-card{
       background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;
       display:flex;flex-direction:column;justify-content:space-between;
@@ -590,9 +653,9 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       .header-left{width:100%}
       .stream-header h2{font-size:1rem;white-space:normal}
       .header-meta{font-size:.75rem;flex-wrap:wrap}
-      .header-right{width:100%;max-width:100%;display:flex;gap:6px;flex-wrap:nowrap;justify-content:space-between}
-      .search-input{flex:1 1 auto;min-width:60px;max-width:none}
-      .btn, .btn-open-all{padding:6px 8px;font-size:.85rem;height:34px}
+      .header-right{width:100%;max-width:100%;display:flex;gap:5px;flex-wrap:nowrap;justify-content:space-between}
+      .search-wrap{flex:1 1 auto;min-width:55px}
+      .btn, .btn-open-all{padding:6px 7px;font-size:.82rem;height:34px}
       .btn-open-all{font-size:.75rem}
       .cards-grid{grid-template-columns:1fr;gap:8px;padding:8px 8px calc(24px + env(safe-area-inset-bottom,0px))}
       .feed-card{padding:14px}
@@ -658,8 +721,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         </div>
       </div>
       <div class="header-right">
-        <input type="search" class="search-input" id="search-box" placeholder="Durchsuchen..." oninput="filterSearch(this.value)">
+        <div class="search-wrap">
+          <input type="text" class="search-input" id="search-box" placeholder="Durchsuchen..." oninput="filterSearch(this.value)">
+          <button class="search-clear" id="search-clear-btn" onclick="clearSearch()" title="Suche löschen">&times;</button>
+        </div>
         <button class="btn-open-all" id="open-all-btn" onclick="openAllBookmarked()" title="Alle gemerkten Artikel in neuen Tabs öffnen">Alle öffnen ↗</button>
+        <button class="btn" id="sort-unseen-btn" onclick="toggleSortUnseen()" title="Ungesehene Artikel zuerst sortieren (Taste: s)">⇅</button>
         <button class="btn" id="unread-filter-btn" onclick="toggleUnreadFilter()" title="Nur ungesehene Artikel anzeigen (Taste: u)">👁️ <span id="unread-count">0</span></button>
         <button class="btn" id="saved-filter-btn" onclick="toggleSavedFilter()" title="Später lesen / Lesezeichen">🔖 <span id="saved-count">0</span></button>
         __DESKTOP_REFRESH_BTN__
@@ -671,7 +738,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   <script>
     window.IS_ARCHIVE = __IS_ARCHIVE__;
     const configuredSources = __CONFIGURED_SOURCES__, feedHealth = __HEALTH_DATA__, buildTime = "__NOW_STR__";
-    let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, onlyUnread = false, kbIndex = -1, sTimer = null, toastTimer = null, pollInterval = null;
+    let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, onlyUnread = false, sortUnseenFirst = localStorage.getItem('sort_unseen') === 'true', kbIndex = -1, sTimer = null, toastTimer = null, pollInterval = null, lastFetchTs = Date.now();
 
     if('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 
@@ -748,13 +815,30 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     function updateUnreadCount(){
       const rList = getStorage('read_news'), sList = getStorage('seen_news');
-      let unread = 0;
+      let unreadTotal = 0;
+      const unreadBySrc = {};
+
       document.querySelectorAll('.feed-card').forEach(c => {
         const id = c.dataset.id;
-        if(!rList.includes(id) && !sList.includes(id)) unread++;
+        if(!rList.includes(id) && !sList.includes(id)){
+          unreadTotal++;
+          (c.dataset.sources || '').split(';;;').forEach(s => {
+            if(s) unreadBySrc[s] = (unreadBySrc[s] || 0) + 1;
+          });
+        }
       });
+
       const el = document.getElementById('unread-count');
-      if(el) el.textContent = unread;
+      if(el) el.textContent = unreadTotal;
+
+      document.querySelectorAll('#source-list .source-btn').forEach(btn => {
+        const src = btn.dataset.src;
+        const bGroup = btn.querySelector('.badge-group');
+        if(!bGroup) return;
+        const tot = src === 'all' ? liveArticles.length : (counts[src] || 0);
+        const unr = src === 'all' ? unreadTotal : (unreadBySrc[src] || 0);
+        bGroup.innerHTML = (unr > 0 ? `<span class="badge badge-new">${unr}</span>` : '') + `<span class="badge">${tot}</span>`;
+      });
     }
 
     function toggleBookmark(id){
@@ -765,6 +849,15 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       setStorage('bookmarked_news', b);
       updateBookmarkCount();
       if(onlySaved) applyFilters();
+    }
+
+    function toggleSortUnseen(){
+      sortUnseenFirst = !sortUnseenFirst;
+      localStorage.setItem('sort_unseen', sortUnseenFirst);
+      const btn = document.getElementById('sort-unseen-btn');
+      if(btn) btn.classList.toggle('active', sortUnseenFirst);
+      renderUI(liveArticles);
+      showToast(sortUnseenFirst ? '⇅ Sortierung: Ungesehene zuerst' : '⇅ Sortierung: Chronologisch', 2000);
     }
 
     function toggleUnreadFilter(){
@@ -857,24 +950,48 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if(tEl && !onlySaved) tEl.textContent = window.IS_ARCHIVE ? `Archiv: ${articles.length} News bis ${dTime}` : `${articles.length} News bis ${dTime}`;
       const dEl = document.getElementById('header-dup-info'); if(dEl) dEl.innerHTML = `🧹 ${totalDups} Duplikate`;
 
+      const sortBtn = document.getElementById('sort-unseen-btn');
+      if(sortBtn) sortBtn.classList.toggle('active', sortUnseenFirst);
+
       const sorted = Array.from(new Set([...configuredSources, ...Object.keys(counts)])).sort((a,b)=>(counts[b]||0)-(counts[a]||0));
       const sl = document.getElementById('source-list');
       if(sl) {
-        sl.innerHTML = `<li><button class="source-btn active" onclick="filterSource('all',this)"><span>Alle</span><span class="badge">${articles.length}</span></button></li>` +
-          sorted.map(s => `<li><button class="source-btn" onclick="filterSource('${escAttr(s)}',this)"><span>${escAttr(s)}</span><span class="badge">${counts[s]||0}</span></button></li>`).join('');
+        sl.innerHTML = `<li><button class="source-btn ${activeSource==='all'?'active':''}" data-src="all" onclick="filterSource('all',this)"><span>Alle</span><span class="badge-group"><span class="badge">${articles.length}</span></span></button></li>` +
+          sorted.map(s => `<li><button class="source-btn ${activeSource===s?'active':''}" data-src="${escAttr(s)}" onclick="filterSource('${escAttr(s)}',this)"><span>${escAttr(s)}</span><span class="badge-group"><span class="badge">${counts[s]||0}</span></span></button></li>`).join('');
       }
 
       const rList = getStorage('read_news'), sList = getStorage('seen_news'), bList = getStorage('bookmarked_news');
       updateBookmarkCount();
 
+      let displayArts = [...articles];
+      if(sortUnseenFirst){
+        displayArts.sort((a, b) => {
+          const idA = String(hStr(a.link||'')), idB = String(hStr(b.link||''));
+          const uA = (!rList.includes(idA) && !sList.includes(idA)) ? 1 : 0;
+          const uB = (!rList.includes(idB) && !sList.includes(idB)) ? 1 : 0;
+          return uB !== uA ? uB - uA : (b._ts || 0) - (a._ts || 0);
+        });
+      }
+
       const cont = document.getElementById('articles-container');
       if(cont) {
         let htmlBuf = '';
-        for(let i = 0; i < articles.length; i++) {
-          const a = articles[i];
-          const id = hStr(a.link||''), oth = renderOtherSources(a);
+        let dividerInserted = false;
+        let hasAnyUnseen = false;
+
+        for(let i = 0; i < displayArts.length; i++) {
+          const a = displayArts[i];
+          const id = String(hStr(a.link||'')), oth = renderOtherSources(a);
+          const isUnseen = !rList.includes(id) && !sList.includes(id);
+          if(isUnseen) hasAnyUnseen = true;
+
+          if(!isUnseen && hasAnyUnseen && !dividerInserted && !onlyUnread){
+            htmlBuf += `<div class="seen-divider" id="seen-divider">✓ Bis hierhin bereits gesehen</div>`;
+            dividerInserted = true;
+          }
+
           const img = a.image ? `<img class="feed-thumb" src="${escAttr(a.image)}" loading="lazy" referrerpolicy="no-referrer" onload="if(this.naturalWidth<80||this.naturalHeight<60)this.remove()" onerror="this.remove()">` : '';
-          const cls = (rList.includes(String(id))?' read':'') + (sList.includes(String(id))?' seen':'') + (bList.includes(String(id))?' bookmarked':'');
+          const cls = (rList.includes(id)?' read':'') + (sList.includes(id)?' seen':'') + (bList.includes(id)?' bookmarked':'');
           const safeTitle = escAttr(a.title||'Ohne Titel'), safeLink = escAttr(a.link||'#'), safeSrcs = escAttr([a.source||'',...(a.other_sources||[])].join(';;;'));
 
           htmlBuf += `<article class="feed-card${cls}" data-id="${id}" data-link="${safeLink}" data-title="${safeTitle}" data-sources="${safeSrcs}">
@@ -888,7 +1005,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                 ${oth}
               </div>
               <a class="feed-title" href="${safeLink}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${safeTitle}</a>
-              <p class="feed-summary">${a.summary||''}</p>
+              <p class="feed-summary" data-raw="${escAttr(a.summary||'')}">${a.summary||''}</p>
             </div>${img}
           </article>`;
         }
@@ -941,7 +1058,26 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       if(t && !onlySaved) t.textContent = (src==='all')?(window.IS_ARCHIVE?`Archiv: ${liveArticles.length} News bis ${dTime}`:`${liveArticles.length} News bis ${dTime}`):`${src} (${counts[src]||0}) bis ${dTime}`;
       applyFilters(); if(window.innerWidth<=768) toggleSidebar();
     }
-    function filterSearch(q){ clearTimeout(sTimer); sTimer = setTimeout(()=>{ searchQuery = q.toLowerCase().trim(); applyFilters(); }, 100); }
+
+    function clearSearch(){
+      const sb = document.getElementById('search-box');
+      if(sb){ sb.value = ''; filterSearch(''); sb.focus(); }
+    }
+
+    function filterSearch(q){
+      const clr = document.getElementById('search-clear-btn');
+      if(clr) clr.style.display = q.length > 0 ? 'block' : 'none';
+      clearTimeout(sTimer);
+      sTimer = setTimeout(()=>{ searchQuery = q.toLowerCase().trim(); applyFilters(); }, 100);
+    }
+
+    function highlightText(htmlStr, query){
+      if(!query || query.length < 2) return htmlStr;
+      const escQ = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`(${escQ})(?![^<]*>)`, 'gi');
+      return htmlStr.replace(re, '<mark class="hl">$1</mark>');
+    }
+
     function applyFilters(){
       const bList = getStorage('bookmarked_news'), rList = getStorage('read_news'), sList = getStorage('seen_news');
       kbIndex = -1;
@@ -954,7 +1090,16 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                      (activeSource==='all' || (c.dataset.sources||'').split(';;;').includes(activeSource)) &&
                      (!searchQuery || c.textContent.toLowerCase().includes(searchQuery));
         c.style.display = show ? '' : 'none';
+
+        if(show){
+          const titleEl = c.querySelector('.feed-title');
+          const sumEl = c.querySelector('.feed-summary');
+          if(titleEl) titleEl.innerHTML = highlightText(escAttr(c.dataset.title), searchQuery);
+          if(sumEl && sumEl.dataset.raw !== undefined) sumEl.innerHTML = highlightText(sumEl.dataset.raw, searchQuery);
+        }
       });
+      const div = document.getElementById('seen-divider');
+      if(div) div.style.display = (onlyUnread || onlySaved || searchQuery || activeSource !== 'all') ? 'none' : '';
       updateUnreadCount();
     }
 
@@ -1026,7 +1171,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         const r = await fetch('data.json?t=' + Date.now(), {cache:'no-store'});
         if(!r.ok) throw new Error();
         rawData = await r.text();
-        const parsed = parsePayload(localStorage.getItem('hub_key')||"");
+        lastFetchTs = Date.now();
+        const parsed = await parsePayload(localStorage.getItem('hub_key')||"");
         if(parsed) {
           globalArticles = parsed;
           onLoaded();
@@ -1035,17 +1181,32 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           location.reload();
         }
       } catch(e){
-        location.reload();
+        if(showFeedback) location.reload();
       }
     }
 
-    function parsePayload(pw){
+    // Native WebCrypto AES-GCM Entschlüsselung
+    async function parsePayload(pw){
       try {
         if(!rawData) return null;
-        if(rawData.trim().startsWith('[')) return JSON.parse(rawData);
+        const trimmed = rawData.trim();
+        if(trimmed.startsWith('[')) return JSON.parse(trimmed);
         if(!pw) return null;
-        const dec = CryptoJS.AES.decrypt(rawData, pw).toString(CryptoJS.enc.Utf8);
-        return (dec && dec.startsWith('[')) ? JSON.parse(dec) : null;
+        if(trimmed.startsWith('GCM1:')){
+          const binStr = atob(trimmed.slice(5));
+          const bytes = new Uint8Array(binStr.length);
+          for(let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+          const salt = bytes.slice(0, 16), iv = bytes.slice(16, 28), ct = bytes.slice(28);
+          const keyMat = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+          const key = await crypto.subtle.deriveKey(
+            {name: 'PBKDF2', salt: salt, iterations: 100000, hash: 'SHA-256'},
+            keyMat, {name: 'AES-GCM', length: 256}, false, ['decrypt']
+          );
+          const decBuf = await crypto.subtle.decrypt({name: 'AES-GCM', iv: iv}, key, ct);
+          const decStr = new TextDecoder().decode(decBuf);
+          return decStr.startsWith('[') ? JSON.parse(decStr) : null;
+        }
+        return null;
       } catch(e){ return null; }
     }
 
@@ -1153,12 +1314,16 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         const r = await fetch('data.json?t=' + Date.now(), {cache:'no-store'}).catch(() => fetch('data.json'));
         if(!r.ok) throw new Error(r.status);
         rawData = await r.text();
+        lastFetchTs = Date.now();
       } catch(e){
         document.getElementById('current-title').textContent = "Fehler beim Laden von data.json";
         return;
       }
 
-      let parsed = parsePayload('') || (localStorage.getItem('hub_key') ? parsePayload(localStorage.getItem('hub_key')) : null);
+      let parsed = await parsePayload('');
+      if(!parsed && localStorage.getItem('hub_key')){
+        parsed = await parsePayload(localStorage.getItem('hub_key'));
+      }
       if(parsed) {
         globalArticles = parsed;
         onLoaded();
@@ -1168,8 +1333,9 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    function submitAuth(){
-      const pw = document.getElementById('auth-pwd').value, parsed = parsePayload(pw);
+    async function submitAuth(){
+      const pw = document.getElementById('auth-pwd').value;
+      const parsed = await parsePayload(pw);
       if(parsed) {
         localStorage.setItem('hub_key', pw);
         globalArticles = parsed;
@@ -1241,21 +1407,29 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
     document.addEventListener('visibilitychange', () => {
       if(document.visibilityState==='visible'){
-        document.querySelectorAll('.feed-card').forEach(c => {
-          const art = liveArticles.find(a => String(hStr(a.link||'')) === c.dataset.id);
-          if(art && art.published) c.querySelector('.feed-time').textContent = relTime(art.published);
-        });
+        if(Date.now() - lastFetchTs > 900000){
+          reloadDataSilent(true);
+        } else {
+          document.querySelectorAll('.feed-card').forEach(c => {
+            const art = liveArticles.find(a => String(hStr(a.link||'')) === c.dataset.id);
+            if(art && art.published) c.querySelector('.feed-time').textContent = relTime(art.published);
+          });
+        }
       }
     });
 
     document.addEventListener('keydown', e => {
       if(['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
-        if(e.key==='Escape') document.activeElement.blur();
+        if(e.key==='Escape'){
+          if(document.activeElement.id === 'search-box' && document.activeElement.value) clearSearch();
+          document.activeElement.blur();
+        }
         return;
       }
       if(e.key==='[') toggleSidebar();
       if(e.key==='r') triggerWorkflow();
       if(e.key==='u') toggleUnreadFilter();
+      if(e.key==='s') toggleSortUnseen();
       if(e.key==='/'){ e.preventDefault(); document.getElementById('search-box').focus(); }
       if(e.key==='Escape'){ toggleModal('health-modal',false); toggleModal('dup-modal',false); hideToast(); }
 
@@ -1286,8 +1460,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v18';
-const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v20';
+const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
 self.addEventListener('fetch', e => {
@@ -1329,6 +1503,7 @@ def render_page(feed_health, feeds, is_archive=False):
 if __name__ == "__main__":
     os.makedirs("public", exist_ok=True)
     pw = os.environ.get("PAGE_PASSWORD", "")
+    force = os.environ.get("FORCE_REFRESH", "").lower() in ("true", "1")
     cutoff_ts = int((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=MAX_RETENTION_HOURS)).timestamp())
 
     cached, meta = load_cached_state()
@@ -1341,6 +1516,7 @@ if __name__ == "__main__":
         json.dump(new_meta, f, separators=(',', ':'))
 
     new_items = []
+    merged_updates = False
     for r in raw_items:
         if any(r["link"] == c["link"] for c in cached):
             continue
@@ -1348,6 +1524,7 @@ if __name__ == "__main__":
         if m:
             if r["source"] != m["source"] and r["source"] not in m.setdefault("other_sources", []):
                 m["other_sources"].append(r["source"])
+                merged_updates = True
 
             seen_links = {d.get("link") for d in m.setdefault("merged_details", [])}
             if r.get("link") and r["link"] not in seen_links and r["link"] != m.get("link"):
@@ -1357,6 +1534,7 @@ if __name__ == "__main__":
                     "link": r["link"],
                     "matched_with": m["title"]
                 })
+                merged_updates = True
         else:
             new_items.append(r)
 
@@ -1373,9 +1551,10 @@ if __name__ == "__main__":
         **({"merged_details": a["merged_details"]} if a.get("merged_details") else {})
     } for a in final]
 
+    should_deploy = bool(new_items or merged_updates or force or not os.path.exists("public/index.html"))
     if "GITHUB_OUTPUT" in os.environ:
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as gh:
-            gh.write("deploy=true\n")
+            gh.write(f"deploy={'true' if should_deploy else 'false'}\n")
 
     json_payload = json.dumps(frontend_data, ensure_ascii=False, separators=(',', ':'))
     with open("public/data.json", "w", encoding="utf-8") as f:
