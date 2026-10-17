@@ -15,10 +15,7 @@ from difflib import SequenceMatcher
 
 warnings.filterwarnings("ignore", category=UserWarning, module="google.genai")
 
-from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import feedparser
 from google import genai
 from google.genai import types
@@ -120,7 +117,7 @@ def pick_best_from_srcset(srcset: str) -> str | None:
     return sorted(candidates, key=lambda x: x[0], reverse=True)[0][1]
 
 
-# --- Moderne Krypto (WebCrypto-kompatibles AES-GCM + Legacy Fallback) ---
+# --- Krypto (OpenSSL Salted__ Format, kompatibel mit CryptoJS) ---
 def openssl_kdf(pw: bytes, salt: bytes, klen=32, ivlen=16) -> tuple[bytes, bytes]:
     d = b""
     while len(d) < (klen + ivlen):
@@ -128,30 +125,20 @@ def openssl_kdf(pw: bytes, salt: bytes, klen=32, ivlen=16) -> tuple[bytes, bytes
     return d[:klen], d[klen:klen + ivlen]
 
 
-def derive_gcm_key(pw: str, salt: bytes) -> bytes:
-    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=100000)
-    return kdf.derive(pw.encode("utf-8"))
-
-
 def encrypt_payload(data: str, pw: str) -> str:
     if not pw:
         return data
-    salt = os.urandom(16)
-    iv = os.urandom(12)
-    key = derive_gcm_key(pw, salt)
-    ct = AESGCM(key).encrypt(iv, data.encode("utf-8"), None)
-    return "GCM1:" + base64.b64encode(salt + iv + ct).decode("ascii")
+    salt = os.urandom(8)
+    key, iv = openssl_kdf(pw.encode(), salt)
+    pad = 16 - (len(data.encode()) % 16)
+    c = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    return base64.b64encode(b"Salted__" + salt + c.update(data.encode() + bytes([pad] * pad)) + c.finalize()).decode()
 
 
 def decrypt_payload(enc: str, pw: str) -> str:
     if not pw:
         return enc
     try:
-        if enc.startswith("GCM1:"):
-            raw = base64.b64decode(enc[5:])
-            salt, iv, ct = raw[:16], raw[16:28], raw[28:]
-            key = derive_gcm_key(pw, salt)
-            return AESGCM(key).decrypt(iv, ct, None).decode("utf-8")
         raw = base64.b64decode(enc)
         if not raw.startswith(b"Salted__"):
             return enc
@@ -300,7 +287,7 @@ def fetch_all_feeds(feeds, cache_meta):
     def _fetch(f):
         url, key = f["url"], hash_feed(f["url"])
         headers = {}
-        entry_meta = dict(cache_meta.get(key, {}))
+        entry_meta = dict(cache_meta.get(key, {})) if isinstance(cache_meta.get(key), dict) else {}
         fails = entry_meta.get("fails", 0)
 
         if "etag" in entry_meta:
@@ -523,8 +510,8 @@ def summarize_delta_with_gemini(items):
     return res
 
 
-# --- Frontend Template (100% Native WebCrypto, kein externes CryptoJS mehr) ---
-PAGE_TEMPLATE = """<!DOCTYPE html>
+# --- Frontend Template (Raw String r"""...""", damit JS-Backslashes 1:1 erhalten bleiben) ---
+PAGE_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="de" data-theme="dark">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -532,6 +519,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
   <meta name="mobile-web-app-capable" content="yes"><meta name="theme-color" content="#121418">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
   <style>
     :root{--bg:#121418;--sidebar:#181b20;--card:#1e2229;--hover:#262b34;--border:#2e3440;--text:#e2e8f0;--muted:#94a3b8;--bold:#f1f5f9;--accent:#2ecc71;--accent-dim:rgba(46,204,113,.15);--link:#60a5fa}
     [data-theme="light"]{--bg:#f8fafc;--sidebar:#fff;--card:#fff;--hover:#f1f5f9;--border:#e2e8f0;--text:#1e293b;--muted:#64748b;--bold:#0f172a;--accent:#16a34a;--accent-dim:rgba(22,163,74,.12);--link:#2563eb}
@@ -985,7 +973,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
           const isUnseen = !rList.includes(id) && !sList.includes(id);
           if(isUnseen) hasAnyUnseen = true;
 
-          if(!isUnseen && hasAnyUnseen && !dividerInserted && !onlyUnread){
+          if(sortUnseenFirst && !isUnseen && hasAnyUnseen && !dividerInserted && !onlyUnread){
             htmlBuf += `<div class="seen-divider" id="seen-divider">✓ Bis hierhin bereits gesehen</div>`;
             dividerInserted = true;
           }
@@ -1172,7 +1160,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         if(!r.ok) throw new Error();
         rawData = await r.text();
         lastFetchTs = Date.now();
-        const parsed = await parsePayload(localStorage.getItem('hub_key')||"");
+        const parsed = parsePayload(localStorage.getItem('hub_key')||"");
         if(parsed) {
           globalArticles = parsed;
           onLoaded();
@@ -1185,28 +1173,14 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    // Native WebCrypto AES-GCM Entschlüsselung
-    async function parsePayload(pw){
+    function parsePayload(pw){
       try {
         if(!rawData) return null;
         const trimmed = rawData.trim();
         if(trimmed.startsWith('[')) return JSON.parse(trimmed);
         if(!pw) return null;
-        if(trimmed.startsWith('GCM1:')){
-          const binStr = atob(trimmed.slice(5));
-          const bytes = new Uint8Array(binStr.length);
-          for(let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
-          const salt = bytes.slice(0, 16), iv = bytes.slice(16, 28), ct = bytes.slice(28);
-          const keyMat = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
-          const key = await crypto.subtle.deriveKey(
-            {name: 'PBKDF2', salt: salt, iterations: 100000, hash: 'SHA-256'},
-            keyMat, {name: 'AES-GCM', length: 256}, false, ['decrypt']
-          );
-          const decBuf = await crypto.subtle.decrypt({name: 'AES-GCM', iv: iv}, key, ct);
-          const decStr = new TextDecoder().decode(decBuf);
-          return decStr.startsWith('[') ? JSON.parse(decStr) : null;
-        }
-        return null;
+        const dec = CryptoJS.AES.decrypt(trimmed, pw).toString(CryptoJS.enc.Utf8);
+        return (dec && dec.startsWith('[')) ? JSON.parse(dec) : null;
       } catch(e){ return null; }
     }
 
@@ -1320,10 +1294,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         return;
       }
 
-      let parsed = await parsePayload('');
-      if(!parsed && localStorage.getItem('hub_key')){
-        parsed = await parsePayload(localStorage.getItem('hub_key'));
-      }
+      let parsed = parsePayload('') || (localStorage.getItem('hub_key') ? parsePayload(localStorage.getItem('hub_key')) : null);
       if(parsed) {
         globalArticles = parsed;
         onLoaded();
@@ -1333,9 +1304,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
-    async function submitAuth(){
-      const pw = document.getElementById('auth-pwd').value;
-      const parsed = await parsePayload(pw);
+    function submitAuth(){
+      const pw = document.getElementById('auth-pwd').value, parsed = parsePayload(pw);
       if(parsed) {
         localStorage.setItem('hub_key', pw);
         globalArticles = parsed;
@@ -1460,8 +1430,8 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v20';
-const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap'];
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v21';
+const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
 self.addEventListener('fetch', e => {
@@ -1503,7 +1473,6 @@ def render_page(feed_health, feeds, is_archive=False):
 if __name__ == "__main__":
     os.makedirs("public", exist_ok=True)
     pw = os.environ.get("PAGE_PASSWORD", "")
-    force = os.environ.get("FORCE_REFRESH", "").lower() in ("true", "1")
     cutoff_ts = int((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=MAX_RETENTION_HOURS)).timestamp())
 
     cached, meta = load_cached_state()
@@ -1516,7 +1485,6 @@ if __name__ == "__main__":
         json.dump(new_meta, f, separators=(',', ':'))
 
     new_items = []
-    merged_updates = False
     for r in raw_items:
         if any(r["link"] == c["link"] for c in cached):
             continue
@@ -1524,7 +1492,6 @@ if __name__ == "__main__":
         if m:
             if r["source"] != m["source"] and r["source"] not in m.setdefault("other_sources", []):
                 m["other_sources"].append(r["source"])
-                merged_updates = True
 
             seen_links = {d.get("link") for d in m.setdefault("merged_details", [])}
             if r.get("link") and r["link"] not in seen_links and r["link"] != m.get("link"):
@@ -1534,7 +1501,6 @@ if __name__ == "__main__":
                     "link": r["link"],
                     "matched_with": m["title"]
                 })
-                merged_updates = True
         else:
             new_items.append(r)
 
@@ -1551,10 +1517,9 @@ if __name__ == "__main__":
         **({"merged_details": a["merged_details"]} if a.get("merged_details") else {})
     } for a in final]
 
-    should_deploy = bool(new_items or merged_updates or force or not os.path.exists("public/index.html"))
     if "GITHUB_OUTPUT" in os.environ:
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as gh:
-            gh.write(f"deploy={'true' if should_deploy else 'false'}\n")
+            gh.write("deploy=true\n")
 
     json_payload = json.dumps(frontend_data, ensure_ascii=False, separators=(',', ':'))
     with open("public/data.json", "w", encoding="utf-8") as f:
