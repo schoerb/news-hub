@@ -3,7 +3,7 @@ name: Build and Deploy News Hub
 on:
   schedule:
     # Krumme Minuten (39) umgehen die überlasteten GitHub-Queues
-    - cron: '39 4-22 * * *'
+    - cron: '39 6-20 * * *'
   workflow_dispatch:
     inputs:
       force_refresh:
