@@ -27,7 +27,9 @@ from urllib3.util import Retry
 # --- Konfiguration ---
 DEFAULT_PRIO = 1
 MAX_RETENTION_HOURS, MAX_DEDUP_HOURS = 48, 20
+OFFLINE_RETENTION_HOURS = 24
 REMOTE_DATA_URL = "https://schoerb.github.io/news-hub/data.json"
+REMOTE_OFFLINE_URL = "https://schoerb.github.io/news-hub/offline.json"
 REMOTE_META_URL = "https://schoerb.github.io/news-hub/cache_meta.json"
 BERLIN_TZ = zoneinfo.ZoneInfo("Europe/Berlin")
 DEDUP_RATIO = float(os.environ.get("DEDUP_RATIO", "0.82"))
@@ -51,12 +53,12 @@ BAD_IMAGE_MARKERS = [
 
 # --- Connection Pool ---
 session = requests.Session()
-adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=Retry(total=2, backoff_factor=0.2))
+adapter = HTTPAdapter(pool_connections=25, pool_maxsize=25, max_retries=Retry(total=2, backoff_factor=0.2))
 session.mount("https://", adapter)
 session.mount("http://", adapter)
 session.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36",
-    "Accept": "application/rss+xml, application/xml, text/xml, */*;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/rss+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Encoding": "gzip, deflate",
 })
 
@@ -154,6 +156,69 @@ def hash_feed(url: str) -> str:
     return hashlib.sha256((url + os.environ.get("PAGE_PASSWORD", "static_news_salt")).encode()).hexdigest()[:16]
 
 
+# --- Reader-Mode Volltext-Extraktor (für Offline-Modus) ---
+def html_to_reader_blocks(raw_html: str) -> str:
+    if not raw_html:
+        return ""
+    # Entferne Stör-Elemente komplett
+    cleaned = re.sub(
+        r"<(script|style|noscript|svg|iframe|form|nav|footer|header|aside|button|figure\s+class=[\"'][^\"']*ad)\b[^>]*>.*?</\1>",
+        " ", raw_html, flags=re.I | re.S
+    )
+    # Versuche zuerst <article> oder <main> zu isolieren, falls vorhanden
+    art_m = re.search(r"<(article|main)\b[^>]*>(.*?)</\1>", cleaned, flags=re.I | re.S)
+    target_html = art_m.group(2) if (art_m and len(art_m.group(2)) > 400) else cleaned
+
+    blocks = []
+    seen_texts = set()
+    for m in re.finditer(r"<(h2|h3|p|li|blockquote)\b[^>]*>(.*?)</\1>", target_html, flags=re.I | re.S):
+        tag = m.group(1).lower()
+        txt = clean_text(m.group(2))
+        if not txt:
+            continue
+        # Filtere kurze Menü-/Cookie-/Footer-Zeilen aus
+        if tag == "p" and len(txt) < 45:
+            continue
+        if tag == "li" and (len(txt) < 35 or len(txt.split()) < 6):
+            continue
+        if any(bad in txt.lower() for bad in [
+            "cookie", "datenschutz", "newsletter", "jetzt abonnieren", "alle rechte vorbehalten",
+            "anzeige", "weiterlesen", "kommentare lesen", "inhaltsverzeichnis", "privacy policy"
+        ]):
+            continue
+        if txt in seen_texts:
+            continue
+        seen_texts.add(txt)
+        safe_txt = html.escape(txt)
+        if tag in ("h2", "h3"):
+            blocks.append(f"<h3>{safe_txt}</h3>")
+        elif tag == "blockquote":
+            blocks.append(f"<blockquote>{safe_txt}</blockquote>")
+        elif tag == "li":
+            blocks.append(f"<p>• {safe_txt}</p>")
+        else:
+            blocks.append(f"<p>{safe_txt}</p>")
+
+    out = "".join(blocks)
+    return out[:14000] if len(out) >= 220 else ""
+
+
+def fetch_article_reader_html(url: str, fallback_rss_html: str = "") -> str:
+    rss_extracted = html_to_reader_blocks(fallback_rss_html)
+    if len(rss_extracted) >= 650:
+        return rss_extracted
+    try:
+        r = session.get(url, timeout=(2.5, 4.0))
+        if r.ok and "text/html" in r.headers.get("Content-Type", "").lower():
+            r.encoding = r.apparent_encoding or "utf-8"
+            web_extracted = html_to_reader_blocks(r.text)
+            if len(web_extracted) > len(rss_extracted):
+                return web_extracted
+    except Exception:
+        pass
+    return rss_extracted
+
+
 # --- Feed Parsing ---
 def parse_opml():
     raw = os.environ.get("FEEDS_OPML", "").strip()
@@ -230,7 +295,7 @@ def parse_ts(val) -> int:
 
 
 def load_cached_state():
-    arts, meta, pw = [], {}, os.environ.get("PAGE_PASSWORD", "")
+    arts, meta, offline_map, pw = [], {}, {}, os.environ.get("PAGE_PASSWORD", "")
     force = os.environ.get("FORCE_REFRESH", "").lower() in ("true", "1")
     raw = ""
 
@@ -252,6 +317,27 @@ def load_cached_state():
             arts = json.loads(decrypt_payload(raw, pw) if pw else raw)
         except Exception:
             pass
+
+    # Lade bestehenden Offline-Volltext-Cache (letzte 24h)
+    raw_off = ""
+    if os.path.exists("public/offline.json") and not force:
+        try:
+            raw_off = open("public/offline.json", "r", encoding="utf-8").read().strip()
+        except Exception:
+            pass
+    elif REMOTE_OFFLINE_URL and not force:
+        try:
+            r = session.get(REMOTE_OFFLINE_URL, timeout=(3.05, 4.0))
+            if r.ok:
+                raw_off = r.text.strip()
+        except Exception:
+            pass
+
+    if raw_off and raw_off != "{}":
+        try:
+            offline_map = json.loads(decrypt_payload(raw_off, pw) if pw else raw_off)
+        except Exception:
+            offline_map = {}
 
     if not force:
         loaded_meta = False
@@ -276,7 +362,7 @@ def load_cached_state():
         a["_ts"] = parse_ts(a.get("published"))
         if a.get("image"):
             a["image"] = normalize_img_url(a["image"])
-    return arts, meta
+    return arts, meta, offline_map
 
 
 def fetch_all_feeds(feeds, cache_meta):
@@ -331,9 +417,13 @@ def fetch_all_feeds(feeds, cache_meta):
                         break
                 ts = int(dt.timestamp()) if dt else int(now.timestamp())
                 if ts > cutoff:
+                    rss_raw_html = e.get("summary", "")
+                    if "content" in e and e.content:
+                        rss_raw_html += " " + e.content[0].get("value", "")
                     items.append({
                         "title": clean_text(e.title),
                         "summary": clean_text(e.get("summary", ""))[:320],
+                        "_rss_html": rss_raw_html,
                         "link": clean_url(e.link.strip()),
                         "image": extract_image(e),
                         "source": f["title"].strip(),
@@ -491,6 +581,7 @@ def summarize_delta_with_gemini(items):
                             "link": orig["link"], "source": orig["source"], "other_sources": orig.get("other_sources", []),
                             "merged_details": orig.get("merged_details", []),
                             "summary": re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", clean_text(it.summary or "")) or clean_text(orig.get("summary", ""))[:180],
+                            "_rss_html": orig.get("_rss_html", ""),
                             "image": orig["image"] if keep_img else None,
                             "_img_rejected": not keep_img,
                             "published": orig["published"], "_ts": orig.get("_ts", 0),
@@ -499,8 +590,8 @@ def summarize_delta_with_gemini(items):
             except Exception as err:
                 time.sleep(15 + (attempt * 5) if ("429" in str(err) or "RESOURCE_EXHAUSTED" in str(err)) else 2 ** (attempt + 1))
         return [{"title": clean_text(o["title"]), "link": o["link"], "source": o["source"], "other_sources": o.get("other_sources", []),
-                 "merged_details": o.get("merged_details", []), "summary": clean_text(o["summary"]), "image": o["image"],
-                 "published": o["published"], "_ts": o.get("_ts", 0)} for o in chunk]
+                 "merged_details": o.get("merged_details", []), "summary": clean_text(o["summary"]), "_rss_html": o.get("_rss_html", ""),
+                 "image": o["image"], "published": o["published"], "_ts": o.get("_ts", 0)} for o in chunk]
 
     chunks = [items[i:i + 35] for i in range(0, len(items), 35)]
     res = []
@@ -508,6 +599,34 @@ def summarize_delta_with_gemini(items):
         for r in ex.map(_call, chunks):
             res.extend(r)
     return res
+
+
+def build_offline_archive(articles: list[dict], existing_offline: dict) -> dict:
+    cutoff_24h = int((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=OFFLINE_RETENTION_HOURS)).timestamp())
+    recent = [a for a in articles if a.get("_ts", 0) >= cutoff_24h]
+    out_map = {}
+    to_fetch = []
+
+    for a in recent:
+        link = a.get("link", "")
+        if not link:
+            continue
+        if link in existing_offline and existing_offline[link]:
+            out_map[link] = existing_offline[link]
+        else:
+            to_fetch.append(a)
+
+    if to_fetch:
+        print(f"📖 Extrahiere Offline-Volltexte für {len(to_fetch)} neue Artikel (24h)...")
+        def _extract_one(art):
+            return art["link"], fetch_article_reader_html(art["link"], art.get("_rss_html", ""))
+
+        with ThreadPoolExecutor(max_workers=12) as ex:
+            for link, content_html in ex.map(_extract_one, to_fetch):
+                if content_html:
+                    out_map[link] = content_html
+
+    return out_map
 
 
 # --- Frontend Template (Raw String r"""...""") ---
@@ -533,10 +652,16 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     }
     body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex}
     
-    .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(2px);z-index:1100;align-items:center;justify-content:center;padding:16px}
-    .modal-card{background:var(--sidebar);border:1px solid var(--border);border-radius:12px;padding:24px;width:100%;max-width:540px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 16px 36px rgba(0,0,0,.3)}
-    .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px}
-    .modal-body{overflow-y:auto;flex-grow:1;font-size:.88rem}
+    .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);backdrop-filter:blur(3px);z-index:1100;align-items:center;justify-content:center;padding:16px}
+    .modal-card{background:var(--sidebar);border:1px solid var(--border);border-radius:12px;padding:24px;width:100%;max-width:540px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 16px 36px rgba(0,0,0,.35)}
+    .modal-card.reader-modal{max-width:720px;max-height:88vh;padding:22px}
+    .modal-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:12px;gap:12px}
+    .modal-body{overflow-y:auto;flex-grow:1;font-size:.9rem}
+    .reader-content{font-size:.98rem;line-height:1.68;color:var(--text);padding-right:4px}
+    .reader-content p{margin-bottom:14px}
+    .reader-content h3{color:var(--bold);font-size:1.1rem;margin:18px 0 8px}
+    .reader-content blockquote{border-left:3px solid var(--accent);padding-left:12px;color:var(--muted);margin:12px 0;font-style:italic}
+    .reader-thumb{width:100%;max-height:280px;object-fit:cover;border-radius:8px;margin-bottom:16px}
     .modal-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:12px}
     .btn, .btn-open-all{
       background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);
@@ -610,8 +735,9 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     .feed-card.seen .unread-dot{background:var(--muted);box-shadow:none;opacity:.55}
     .feed-card.read .unread-dot{background:transparent;box-shadow:none;border:1.5px solid var(--muted);opacity:.35}
     .feed-card.read .feed-title{color:var(--muted)}
-    .action-icon-btn{background:none;border:none;padding:0;cursor:pointer;font-size:.9rem;opacity:.4;transition:all .15s;display:inline-flex;align-items:center}
-    .action-icon-btn:hover{opacity:.9;transform:scale(1.15)}
+    .action-icon-btn{background:none;border:none;padding:0;cursor:pointer;font-size:.9rem;opacity:.45;transition:all .15s;display:inline-flex;align-items:center}
+    .action-icon-btn:hover{opacity:1;transform:scale(1.15)}
+    .action-icon-btn.has-offline{opacity:.85;color:var(--accent)}
     .feed-card.bookmarked .bookmark-btn{opacity:1;filter:drop-shadow(0 0 4px rgba(234,179,8,.6))}
     .feed-meta{display:flex;align-items:center;gap:6px;font-size:.75rem;margin-bottom:8px;flex-wrap:wrap}
     .feed-source{color:var(--accent);font-weight:600}
@@ -647,6 +773,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       .btn-open-all{font-size:.75rem}
       .cards-grid{grid-template-columns:1fr;gap:8px;padding:8px 8px calc(24px + env(safe-area-inset-bottom,0px))}
       .feed-card{padding:14px}
+      .modal-card.reader-modal{padding:16px;max-height:92vh}
       .toast-container{left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));max-width:none}
     }
   </style>
@@ -658,6 +785,22 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       <input type="password" id="auth-pwd" class="search-input" style="max-width:100%;margin-bottom:12px" placeholder="Passwort..." onkeydown="if(event.key==='Enter')submitAuth()">
       <button class="btn-action" style="margin-top:0" onclick="submitAuth()">Entschlüsseln</button>
       <div id="auth-err" style="color:#ef4444;font-size:.8rem;margin-top:8px;display:none">Ungültiges Passwort!</div>
+    </div>
+  </div>
+  <div id="reader-modal" class="modal-overlay" onclick="if(event.target===this)toggleModal('reader-modal',false)">
+    <div class="modal-card reader-modal">
+      <div class="modal-header">
+        <div>
+          <div id="reader-meta" style="font-size:.78rem;color:var(--accent);font-weight:600;margin-bottom:4px"></div>
+          <h2 id="reader-title" style="font-size:1.15rem;line-height:1.35;color:var(--bold)"></h2>
+        </div>
+        <button class="btn" onclick="toggleModal('reader-modal',false)">&times;</button>
+      </div>
+      <div id="reader-body" class="modal-body reader-content"></div>
+      <div style="display:flex;gap:10px;margin-top:14px;padding-top:10px;border-top:1px solid var(--border)">
+        <a id="reader-orig-link" href="#" target="_blank" rel="noopener" class="btn-action" style="margin-top:0;text-align:center;text-decoration:none;flex:1">Original-Webseite öffnen ↗</a>
+        <button class="btn" style="padding:10px 16px" onclick="toggleModal('reader-modal',false)">Schließen</button>
+      </div>
     </div>
   </div>
   <div id="health-modal" class="modal-overlay">
@@ -706,7 +849,9 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
             <span style="color:var(--border)">•</span>
             __HEALTH_BLOCK__
             <span style="color:var(--border)">•</span>
-            <span class="meta-clickable" id="sync-status" onclick="manualSyncClick()" title="Geräte-Sync Status (Klicken zum Synchronisieren)">☁️ Sync</span>
+            <span class="meta-clickable" id="sync-status" onclick="manualSyncClick()" title="Geräte-Sync Status">☁️ Sync</span>
+            <span style="color:var(--border)">•</span>
+            <span class="meta-clickable" id="offline-status" onclick="preloadOfflineArchive(true)" title="Offline-Volltexte & Bilder der letzten 24h für Flugmodus vorladen">📥 Offline</span>
           </div>
         </div>
       </div>
@@ -730,7 +875,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     const configuredSources = __CONFIGURED_SOURCES__, feedHealth = __HEALTH_DATA__, buildTime = "__NOW_STR__";
     const SYNC_VAR_URL = "https://api.github.com/repos/schoerb/news-hub/actions/variables/NEWSHUB_SYNC";
     const SYNC_VARS_CREATE_URL = "https://api.github.com/repos/schoerb/news-hub/actions/variables";
-    let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, onlyUnread = false, sortUnseenFirst = localStorage.getItem('sort_unseen') === 'true', kbIndex = -1, sTimer = null, toastTimer = null, pollInterval = null, syncPushTimer = null, isSyncing = false, lastFetchTs = Date.now();
+    let rawData = "", globalArticles = [], liveArticles = [], offlineMap = {}, counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, onlyUnread = false, sortUnseenFirst = localStorage.getItem('sort_unseen') === 'true', kbIndex = -1, sTimer = null, toastTimer = null, pollInterval = null, syncPushTimer = null, isSyncing = false, lastFetchTs = Date.now();
 
     if('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 
@@ -783,15 +928,92 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       } catch(e){}
     };
 
-    function markRemoved(id, type){
-      const m = getRemovedMap();
-      m[`${type}:${id}`] = Date.now();
-      setRemovedMap(m);
+    function markRemoved(id, type){ const m = getRemovedMap(); m[`${type}:${id}`] = Date.now(); setRemovedMap(m); }
+    function unmarkRemoved(id, type){ const m = getRemovedMap(); delete m[`${type}:${id}`]; setRemovedMap(m); }
+
+    // --- Offline Reader & Hintergrund-Preloader (letzte 24h) ---
+    function loadLocalOfflineCache(){
+      try {
+        offlineMap = JSON.parse(localStorage.getItem('offline_articles_24h') || '{}');
+        const cnt = Object.keys(offlineMap).length;
+        const el = document.getElementById('offline-status');
+        if(el && cnt > 0){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
+      } catch(e){ offlineMap = {}; }
     }
-    function unmarkRemoved(id, type){
-      const m = getRemovedMap();
-      delete m[`${type}:${id}`];
-      setRemovedMap(m);
+
+    async function preloadOfflineArchive(manualTrigger = false){
+      const el = document.getElementById('offline-status');
+      if(el) { el.innerHTML = '📥 ⏳'; el.style.color = 'var(--muted)'; }
+      if(manualTrigger) showToast('<span class="spin">⏳</span> Lade Volltexte & Bilder für Offline-Modus...', 0);
+
+      try {
+        const r = await fetch('offline.json?t=' + Date.now(), {cache:'no-store'}).catch(() => fetch('offline.json'));
+        if(!r.ok) throw new Error(r.status);
+        const rawOff = (await r.text()).trim();
+        let parsedOff = null;
+        const pw = localStorage.getItem('hub_key') || '';
+
+        if(rawOff.startsWith('{')) parsedOff = JSON.parse(rawOff);
+        else if(pw){
+          const dec = CryptoJS.AES.decrypt(rawOff, pw).toString(CryptoJS.enc.Utf8);
+          if(dec && dec.startsWith('{')) parsedOff = JSON.parse(dec);
+        }
+
+        if(parsedOff){
+          offlineMap = parsedOff;
+          try { localStorage.setItem('offline_articles_24h', JSON.stringify(offlineMap)); } catch(e){}
+          const cnt = Object.keys(offlineMap).length;
+          if(el){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
+
+          // Markiere alle Karten mit verfügbarem Offline-Volltext
+          document.querySelectorAll('.feed-card').forEach(c => {
+            const rBtn = c.querySelector('.reader-btn');
+            if(rBtn) rBtn.classList.toggle('has-offline', Boolean(offlineMap[c.dataset.link]));
+          });
+
+          // Bei aktivem Klick auch Artikelbilder der letzten 24h im Browser-Cache vorwärmen
+          if(manualTrigger && 'caches' in window){
+            const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 60);
+            caches.open('news-hub-v23').then(cache => {
+              imgUrls.forEach(u => fetch(u, {mode: 'no-cors'}).then(res => cache.put(u, res)).catch(()=>{}));
+            });
+            showToast(`✅ ${cnt} Artikel + Bilder für Offline-Modus gespeichert!`, 3500);
+          }
+        }
+      } catch(e){
+        loadLocalOfflineCache();
+        if(manualTrigger) showToast('⚠️ Offline-Archiv derzeit nur aus lokalem Cache verfügbar.', 3000);
+      }
+    }
+
+    function openReaderModal(id){
+      const art = liveArticles.find(a => String(hStr(a.link||'')) === String(id)) || globalArticles.find(a => String(hStr(a.link||'')) === String(id));
+      if(!art) return;
+
+      if(!getStorage('read_news').includes(String(id))) toggleRead(String(id));
+
+      document.getElementById('reader-meta').textContent = `${art.source || 'News'} • ${relTime(art.published)}${!navigator.onLine ? ' • ⚡ OFFLINE-MODUS' : ''}`;
+      document.getElementById('reader-title').textContent = art.title || '';
+      document.getElementById('reader-orig-link').href = art.link || '#';
+
+      const fullHtml = offlineMap[art.link] || '';
+      const imgHtml = art.image ? `<img class="reader-thumb" src="${escAttr(art.image)}" referrerpolicy="no-referrer" onerror="this.remove()">` : '';
+      const summaryBox = `<div style="padding:12px;background:var(--card);border-left:3px solid var(--accent);border-radius:6px;margin-bottom:16px;font-weight:500">${art.summary || ''}</div>`;
+
+      const bodyEl = document.getElementById('reader-body');
+      bodyEl.innerHTML = imgHtml + summaryBox + (fullHtml || `<p style="color:var(--muted)">Für diesen Artikel ist nur die KI-Zusammenfassung offline hinterlegt. Klicke unten auf „Original-Webseite öffnen“, sobald du wieder Empfang hast.</p>`);
+      bodyEl.scrollTop = 0;
+      toggleModal('reader-modal', true);
+    }
+
+    function handleArticleClick(e, id, url){
+      if(!navigator.onLine){
+        e.preventDefault();
+        openReaderModal(id);
+        return false;
+      }
+      if(!getStorage('read_news').includes(String(id))) toggleRead(String(id));
+      return true;
     }
 
     // --- Cloud Sync via GitHub Actions Variable (NEWSHUB_SYNC) ---
@@ -802,15 +1024,11 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
     function manualSyncClick(){
       const tk = localStorage.getItem('gh_token');
-      if(!tk){
-        triggerWorkflow();
-      } else {
-        pullCloudSync(true);
-      }
+      if(!tk){ triggerWorkflow(); } else { pullCloudSync(true); }
     }
 
     function scheduleCloudPush(){
-      if(!localStorage.getItem('gh_token')) return;
+      if(!localStorage.getItem('gh_token') || !navigator.onLine) return;
       clearTimeout(syncPushTimer);
       setSyncUI('☁️ ⏳', 'var(--muted)');
       syncPushTimer = setTimeout(() => pushCloudSync(), 2200);
@@ -818,7 +1036,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
     async function pullCloudSync(showFeedback = false){
       const tk = localStorage.getItem('gh_token');
-      if(!tk || isSyncing) return;
+      if(!tk || isSyncing || !navigator.onLine) return;
       isSyncing = true;
       setSyncUI('☁️ 🔄', 'var(--muted)');
       try {
@@ -826,11 +1044,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
           headers: {'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + tk},
           cache: 'no-store'
         });
-        if(r.status === 404){
-          isSyncing = false;
-          await pushCloudSync();
-          return;
-        }
+        if(r.status === 404){ isSyncing = false; await pushCloudSync(); return; }
         if(!r.ok) throw new Error(r.status);
         const data = await r.json();
         const remote = JSON.parse(data.value || '{}');
@@ -857,7 +1071,6 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         const newSeen = mergeList('seen_news', remote.s, 's');
         const newBm   = mergeList('bookmarked_news', remote.b, 'b');
 
-        // Aktualisiere DOM-Karten ohne komplettes Neu-Rendern (verhindert Scroll-Sprünge)
         document.querySelectorAll('.feed-card').forEach(c => {
           const id = c.dataset.id;
           c.classList.toggle('read', newRead.includes(id));
@@ -879,7 +1092,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
     async function pushCloudSync(){
       const tk = localStorage.getItem('gh_token');
-      if(!tk) return;
+      if(!tk || !navigator.onLine) return;
       try {
         const payloadObj = {
           r: getStorage('read_news').slice(-600),
@@ -1141,18 +1354,20 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
           const img = a.image ? `<img class="feed-thumb" src="${escAttr(a.image)}" loading="lazy" referrerpolicy="no-referrer" onload="if(this.naturalWidth<80||this.naturalHeight<60)this.remove()" onerror="this.remove()">` : '';
           const cls = (rList.includes(id)?' read':'') + (sList.includes(id)?' seen':'') + (bList.includes(id)?' bookmarked':'');
           const safeTitle = escAttr(a.title||'Ohne Titel'), safeLink = escAttr(a.link||'#'), safeSrcs = escAttr([a.source||'',...(a.other_sources||[])].join(';;;'));
+          const hasOff = Boolean(offlineMap[a.link]);
 
           htmlBuf += `<article class="feed-card${cls}" data-id="${id}" data-link="${safeLink}" data-title="${safeTitle}" data-sources="${safeSrcs}">
             <div class="feed-content">
               <div class="feed-meta">
                 <button class="action-icon-btn bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Merken (Taste: b)">🔖</button>
+                <button class="action-icon-btn reader-btn ${hasOff?'has-offline':''}" onclick="event.stopPropagation();openReaderModal('${id}')" title="Offline-Lesemodus öffnen (Taste: v)">📖</button>
                 <button class="action-icon-btn" onclick="event.stopPropagation();shareCard(this)" title="Teilen">📤</button>
                 <span class="feed-source">${escAttr(a.source||'Quelle')}</span>
                 <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Status umschalten (Taste: m)"><span class="unread-dot"></span></button>
                 <span class="feed-time">${relTime(a.published)}</span>
                 ${oth}
               </div>
-              <a class="feed-title" href="${safeLink}" target="_blank" rel="noopener" onclick="if(!getStorage('read_news').includes('${id}'))toggleRead('${id}')">${safeTitle}</a>
+              <a class="feed-title" href="${safeLink}" target="_blank" rel="noopener" onclick="return handleArticleClick(event, '${id}', '${safeLink}')">${safeTitle}</a>
               <p class="feed-summary" data-raw="${escAttr(a.summary||'')}">${a.summary||''}</p>
             </div>${img}
           </article>`;
@@ -1334,7 +1549,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
           location.reload();
         }
       } catch(e){
-        if(showFeedback) location.reload();
+        if(showFeedback) showToast('⚡ Offline-Modus aktiv (lokaler Cache)', 2500);
       }
     }
 
@@ -1351,6 +1566,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
     async function init(){
       initTheme();
+      loadLocalOfflineCache();
       if(window.innerWidth>768 && localStorage.getItem('sidebar_closed')==='true') document.getElementById('sidebar').classList.add('collapsed');
       
       const scroller = document.getElementById('main-scroller');
@@ -1496,9 +1712,13 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
         renderUI(liveArticles);
 
-        // Starte initialen Cloud-Sync im Hintergrund
-        if(localStorage.getItem('gh_token')){
+        if(localStorage.getItem('gh_token') && navigator.onLine){
           pullCloudSync(false);
+        }
+
+        // Lade im Hintergrund automatisch alle Offline-Volltexte der letzten 24h nach
+        if(!window.IS_ARCHIVE && navigator.onLine){
+          setTimeout(() => preloadOfflineArchive(false), 1200);
         }
 
         const timers = new Map(), obs = new IntersectionObserver(ents => {
@@ -1549,10 +1769,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
     document.addEventListener('visibilitychange', () => {
       if(document.visibilityState==='visible'){
-        if(Date.now() - lastFetchTs > 900000){
+        if(Date.now() - lastFetchTs > 900000 && navigator.onLine){
           reloadDataSilent(true);
         } else {
-          pullCloudSync(false);
+          if(navigator.onLine) pullCloudSync(false);
           document.querySelectorAll('.feed-card').forEach(c => {
             const art = liveArticles.find(a => String(hStr(a.link||'')) === c.dataset.id);
             if(art && art.published) c.querySelector('.feed-time').textContent = relTime(art.published);
@@ -1574,7 +1794,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       if(e.key==='u') toggleUnreadFilter();
       if(e.key==='s') toggleSortUnseen();
       if(e.key==='/'){ e.preventDefault(); document.getElementById('search-box').focus(); }
-      if(e.key==='Escape'){ toggleModal('health-modal',false); toggleModal('dup-modal',false); hideToast(); }
+      if(e.key==='Escape'){ toggleModal('reader-modal',false); toggleModal('health-modal',false); toggleModal('dup-modal',false); hideToast(); }
 
       const visibleCards = Array.from(document.querySelectorAll('.feed-card')).filter(c => c.style.display !== 'none');
       if(!visibleCards.length) return;
@@ -1592,6 +1812,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         const active = visibleCards[kbIndex];
         const id = active.dataset.id;
         if(e.key==='o'){ window.open(active.dataset.link, '_blank'); if(!getStorage('read_news').includes(id)) toggleRead(id); }
+        if(e.key==='v'){ e.preventDefault(); openReaderModal(id); }
         if(e.key==='m') toggleRead(id);
         if(e.key==='b') toggleBookmark(id);
       }
@@ -1603,17 +1824,21 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v22';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v23';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
 self.addEventListener('fetch', e => {
   const url = e.request.url;
-  if (url.includes('data.json') || e.request.mode === 'navigate' || url.endsWith('.html')) {
-    e.respondWith(fetch(e.request).then(res => { const cl = res.clone(); caches.open(CACHE_NAME).then(c => c.put(e.request, cl)); return res; }).catch(() => caches.match(e.request)));
+  if (url.includes('data.json') || url.includes('offline.json') || e.request.mode === 'navigate' || url.endsWith('.html')) {
+    e.respondWith(
+      fetch(e.request)
+        .then(res => { const cl = res.clone(); caches.open(CACHE_NAME).then(c => c.put(e.request, cl)); return res; })
+        .catch(() => caches.match(e.request, {ignoreSearch: true}))
+    );
     return;
   }
-  e.respondWith(caches.match(e.request).then(cached => cached || fetch(e.request)));
+  e.respondWith(caches.match(e.request, {ignoreSearch: true}).then(cached => cached || fetch(e.request)));
 });
 """
 
@@ -1648,7 +1873,7 @@ if __name__ == "__main__":
     pw = os.environ.get("PAGE_PASSWORD", "")
     cutoff_ts = int((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=MAX_RETENTION_HOURS)).timestamp())
 
-    cached, meta = load_cached_state()
+    cached, meta, existing_offline = load_cached_state()
     cached = [a for a in cached if a.get("_ts", 0) > cutoff_ts]
     feeds = parse_opml()
 
@@ -1682,6 +1907,9 @@ if __name__ == "__main__":
     combined = (summarize_delta_with_gemini(bundled) + cached) if bundled else cached
     final = sorted(consolidate_articles(combined, allow_image_adopt=False), key=lambda a: a.get("_ts", 0), reverse=True)
 
+    # Erstelle Offline-Volltext-Archiv für alle Artikel der letzten 24 Stunden
+    offline_data = build_offline_archive(final, existing_offline)
+
     frontend_data = [{
         "title": a["title"], "link": a["link"], "source": a["source"], "summary": a["summary"],
         "published": a.get("published"), "_ts": a.get("_ts", 0),
@@ -1697,6 +1925,11 @@ if __name__ == "__main__":
     json_payload = json.dumps(frontend_data, ensure_ascii=False, separators=(',', ':'))
     with open("public/data.json", "w", encoding="utf-8") as f:
         f.write(encrypt_payload(json_payload, pw) if pw else json_payload)
+
+    offline_payload = json.dumps(offline_data, ensure_ascii=False, separators=(',', ':'))
+    with open("public/offline.json", "w", encoding="utf-8") as f:
+        f.write(encrypt_payload(offline_payload, pw) if pw else offline_payload)
+
     with open("public/sw.js", "w", encoding="utf-8") as f:
         f.write(SW_SCRIPT)
     with open("public/manifest.json", "w", encoding="utf-8") as f:
