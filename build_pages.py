@@ -27,7 +27,7 @@ from urllib3.util import Retry
 # --- Konfiguration ---
 DEFAULT_PRIO = 1
 MAX_RETENTION_HOURS, MAX_DEDUP_HOURS = 48, 20
-OFFLINE_RETENTION_HOURS = 24
+OFFLINE_RETENTION_HOURS = 48
 REMOTE_DATA_URL = "https://schoerb.github.io/news-hub/data.json"
 REMOTE_OFFLINE_URL = "https://schoerb.github.io/news-hub/offline.json"
 REMOTE_META_URL = "https://schoerb.github.io/news-hub/cache_meta.json"
@@ -145,7 +145,7 @@ def decrypt_payload(enc: str, pw: str) -> str:
         if not raw.startswith(b"Salted__"):
             return enc
         key, iv = openssl_kdf(pw.encode(), raw[8:16])
-        c = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
+        c = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
         d = c.update(raw[16:]) + c.finalize()
         return d[:-d[-1]].decode("utf-8")
     except Exception:
@@ -160,12 +160,10 @@ def hash_feed(url: str) -> str:
 def html_to_reader_blocks(raw_html: str) -> str:
     if not raw_html:
         return ""
-    # Entferne Stör-Elemente komplett
     cleaned = re.sub(
         r"<(script|style|noscript|svg|iframe|form|nav|footer|header|aside|button|figure\s+class=[\"'][^\"']*ad)\b[^>]*>.*?</\1>",
         " ", raw_html, flags=re.I | re.S
     )
-    # Versuche zuerst <article> oder <main> zu isolieren, falls vorhanden
     art_m = re.search(r"<(article|main)\b[^>]*>(.*?)</\1>", cleaned, flags=re.I | re.S)
     target_html = art_m.group(2) if (art_m and len(art_m.group(2)) > 400) else cleaned
 
@@ -176,7 +174,6 @@ def html_to_reader_blocks(raw_html: str) -> str:
         txt = clean_text(m.group(2))
         if not txt:
             continue
-        # Filtere kurze Menü-/Cookie-/Footer-Zeilen aus
         if tag == "p" and len(txt) < 45:
             continue
         if tag == "li" and (len(txt) < 35 or len(txt.split()) < 6):
@@ -318,7 +315,6 @@ def load_cached_state():
         except Exception:
             pass
 
-    # Lade bestehenden Offline-Volltext-Cache (letzte 24h)
     raw_off = ""
     if os.path.exists("public/offline.json") and not force:
         try:
@@ -602,8 +598,8 @@ def summarize_delta_with_gemini(items):
 
 
 def build_offline_archive(articles: list[dict], existing_offline: dict) -> dict:
-    cutoff_24h = int((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=OFFLINE_RETENTION_HOURS)).timestamp())
-    recent = [a for a in articles if a.get("_ts", 0) >= cutoff_24h]
+    cutoff_48h = int((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=OFFLINE_RETENTION_HOURS)).timestamp())
+    recent = [a for a in articles if a.get("_ts", 0) >= cutoff_48h]
     out_map = {}
     to_fetch = []
 
@@ -617,7 +613,7 @@ def build_offline_archive(articles: list[dict], existing_offline: dict) -> dict:
             to_fetch.append(a)
 
     if to_fetch:
-        print(f"📖 Extrahiere Offline-Volltexte für {len(to_fetch)} neue Artikel (24h)...")
+        print(f"📖 Extrahiere Offline-Volltexte für {len(to_fetch)} Artikel (48h inkl. Archiv)...")
         def _extract_one(art):
             return art["link"], fetch_article_reader_html(art["link"], art.get("_rss_html", ""))
 
@@ -629,7 +625,7 @@ def build_offline_archive(articles: list[dict], existing_offline: dict) -> dict:
     return out_map
 
 
-# --- Frontend Template (Raw String r"""...""") ---
+# --- Frontend Template ---
 PAGE_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="de" data-theme="dark">
 <head>
@@ -805,7 +801,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   </div>
   <div id="health-modal" class="modal-overlay">
     <div class="modal-card">
-      <div class="modal-header"><h2>📡 Feed-Status</h2><button class="btn" onclick="toggleModal('health-modal',false)">&times;</button></div>
+      <div class="modal-header"><h2 id="health-modal-title">📡 Feed-Status</h2><button class="btn" onclick="toggleModal('health-modal',false)">&times;</button></div>
       <div class="modal-body">
         <div style="margin-bottom:12px;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:6px">
           <a href="https://github.com/schoerb/news-hub/actions" target="_blank" rel="noopener" style="color:var(--link);text-decoration:none;display:flex;justify-content:space-between"><span>⚙️ Workflow-Status</span><span>↗</span></a>
@@ -851,7 +847,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
             <span style="color:var(--border)">•</span>
             <span class="meta-clickable" id="sync-status" onclick="manualSyncClick()" title="Geräte-Sync Status">☁️ Sync</span>
             <span style="color:var(--border)">•</span>
-            <span class="meta-clickable" id="offline-status" onclick="preloadOfflineArchive(true)" title="Offline-Volltexte & Bilder der letzten 24h für Flugmodus vorladen">📥 Offline</span>
+            <span class="meta-clickable" id="offline-status" onclick="preloadOfflineArchive(true)" title="Offline-Volltexte & Bilder vorladen">📥 Offline</span>
           </div>
         </div>
       </div>
@@ -931,10 +927,9 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     function markRemoved(id, type){ const m = getRemovedMap(); m[`${type}:${id}`] = Date.now(); setRemovedMap(m); }
     function unmarkRemoved(id, type){ const m = getRemovedMap(); delete m[`${type}:${id}`]; setRemovedMap(m); }
 
-    // --- Offline Reader & Hintergrund-Preloader (letzte 24h) ---
     function loadLocalOfflineCache(){
       try {
-        offlineMap = JSON.parse(localStorage.getItem('offline_articles_24h') || '{}');
+        offlineMap = JSON.parse(localStorage.getItem('offline_articles_48h') || '{}');
         const cnt = Object.keys(offlineMap).length;
         const el = document.getElementById('offline-status');
         if(el && cnt > 0){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
@@ -961,20 +956,18 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
         if(parsedOff){
           offlineMap = parsedOff;
-          try { localStorage.setItem('offline_articles_24h', JSON.stringify(offlineMap)); } catch(e){}
+          try { localStorage.setItem('offline_articles_48h', JSON.stringify(offlineMap)); } catch(e){}
           const cnt = Object.keys(offlineMap).length;
           if(el){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
 
-          // Markiere alle Karten mit verfügbarem Offline-Volltext
           document.querySelectorAll('.feed-card').forEach(c => {
             const rBtn = c.querySelector('.reader-btn');
             if(rBtn) rBtn.classList.toggle('has-offline', Boolean(offlineMap[c.dataset.link]));
           });
 
-          // Bei aktivem Klick auch Artikelbilder der letzten 24h im Browser-Cache vorwärmen
           if(manualTrigger && 'caches' in window){
-            const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 60);
-            caches.open('news-hub-v23').then(cache => {
+            const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 80);
+            caches.open('news-hub-v25').then(cache => {
               imgUrls.forEach(u => fetch(u, {mode: 'no-cors'}).then(res => cache.put(u, res)).catch(()=>{}));
             });
             showToast(`✅ ${cnt} Artikel + Bilder für Offline-Modus gespeichert!`, 3500);
@@ -1016,7 +1009,6 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       return true;
     }
 
-    // --- Cloud Sync via GitHub Actions Variable (NEWSHUB_SYNC) ---
     function setSyncUI(text, color = 'var(--muted)'){
       const el = document.getElementById('sync-status');
       if(el){ el.innerHTML = text; el.style.color = color; }
@@ -1716,8 +1708,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
           pullCloudSync(false);
         }
 
-        // Lade im Hintergrund automatisch alle Offline-Volltexte der letzten 24h nach
-        if(!window.IS_ARCHIVE && navigator.onLine){
+        if(navigator.onLine){
           setTimeout(() => preloadOfflineArchive(false), 1200);
         }
 
@@ -1754,6 +1745,11 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
             lastY = y;
           }
         }, {passive:true});
+
+        const failedFeedsList = feedHealth.filter(f => f.status !== 'ok' && f.code !== 304 && f.code !== 200);
+        const failedCount = failedFeedsList.length;
+        const modalTitleEl = document.getElementById('health-modal-title');
+        if(modalTitleEl) modalTitleEl.textContent = failedCount > 0 ? `📡 Feed-Status (${failedCount} gestört)` : `📡 Feed-Status`;
 
         const hl = document.getElementById('health-list');
         if(hl) {
@@ -1824,7 +1820,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v23';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v25';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
@@ -1853,7 +1849,7 @@ def render_page(feed_health, feeds, is_archive=False):
     now_str = datetime.datetime.now(datetime.timezone.utc).astimezone(BERLIN_TZ).strftime("%d.%m.%Y %H:%M")
     ok = sum(1 for h in feed_health if h["status"] == "ok" or h["code"] in (200, 304))
     failed = len(feed_health) - ok
-    h_text = f'<span style="color:#eab308;cursor:pointer" onclick="toggleModal(\'health-modal\',true)">🟡 {ok}/{len(feed_health)} Feeds ({failed} gestört)</span>' if failed > 0 else f'<span class="meta-clickable" onclick="toggleModal(\'health-modal\',true)">🟢 {ok}/{len(feed_health)} Feeds online</span>'
+    h_text = f'<span style="color:#eab308;cursor:pointer" onclick="toggleModal(\'health-modal\',true)">🟡 {ok}/{len(feed_health)} Feeds</span>' if failed > 0 else f'<span class="meta-clickable" onclick="toggleModal(\'health-modal\',true)">🟢 {ok}/{len(feed_health)} Feeds online</span>'
 
     return PAGE_TEMPLATE.replace("__PAGE_TITLE__", "Archiv" if is_archive else "News-Hub") \
                          .replace("__SIDEBAR_TITLE__", "Archiv (24–48h)" if is_archive else "News-Hub") \
@@ -1907,7 +1903,6 @@ if __name__ == "__main__":
     combined = (summarize_delta_with_gemini(bundled) + cached) if bundled else cached
     final = sorted(consolidate_articles(combined, allow_image_adopt=False), key=lambda a: a.get("_ts", 0), reverse=True)
 
-    # Erstelle Offline-Volltext-Archiv für alle Artikel der letzten 24 Stunden
     offline_data = build_offline_archive(final, existing_offline)
 
     frontend_data = [{
