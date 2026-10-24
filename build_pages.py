@@ -510,7 +510,7 @@ def summarize_delta_with_gemini(items):
     return res
 
 
-# --- Frontend Template (Raw String r"""...""", damit JS-Backslashes 1:1 erhalten bleiben) ---
+# --- Frontend Template (Raw String r"""...""") ---
 PAGE_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="de" data-theme="dark">
 <head>
@@ -705,6 +705,8 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
             <span class="meta-clickable" id="header-dup-info" onclick="openDupModal()">🧹 Duplikate</span>
             <span style="color:var(--border)">•</span>
             __HEALTH_BLOCK__
+            <span style="color:var(--border)">•</span>
+            <span class="meta-clickable" id="sync-status" onclick="manualSyncClick()" title="Geräte-Sync Status (Klicken zum Synchronisieren)">☁️ Sync</span>
           </div>
         </div>
       </div>
@@ -726,7 +728,9 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   <script>
     window.IS_ARCHIVE = __IS_ARCHIVE__;
     const configuredSources = __CONFIGURED_SOURCES__, feedHealth = __HEALTH_DATA__, buildTime = "__NOW_STR__";
-    let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, onlyUnread = false, sortUnseenFirst = localStorage.getItem('sort_unseen') === 'true', kbIndex = -1, sTimer = null, toastTimer = null, pollInterval = null, lastFetchTs = Date.now();
+    const SYNC_VAR_URL = "https://api.github.com/repos/schoerb/news-hub/actions/variables/NEWSHUB_SYNC";
+    const SYNC_VARS_CREATE_URL = "https://api.github.com/repos/schoerb/news-hub/actions/variables";
+    let rawData = "", globalArticles = [], liveArticles = [], counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, onlyUnread = false, sortUnseenFirst = localStorage.getItem('sort_unseen') === 'true', kbIndex = -1, sTimer = null, toastTimer = null, pollInterval = null, syncPushTimer = null, isSyncing = false, lastFetchTs = Date.now();
 
     if('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 
@@ -769,6 +773,143 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     function toggleModal(id, o){ const el = document.getElementById(id); if(el) el.style.display = o ? 'flex':'none'; }
     const getStorage = k => { try { return JSON.parse(localStorage.getItem(k)||'[]'); } catch(e){ return []; } };
     const setStorage = (k,v) => { try { localStorage.setItem(k, JSON.stringify(v.slice(-1000))); } catch(e){} };
+    const getRemovedMap = () => { try { return JSON.parse(localStorage.getItem('removed_news_map')||'{}'); } catch(e){ return {}; } };
+    const setRemovedMap = m => {
+      try {
+        const cutoff = Date.now() - 172800000;
+        const clean = {};
+        for(const [k, ts] of Object.entries(m)) { if(ts > cutoff) clean[k] = ts; }
+        localStorage.setItem('removed_news_map', JSON.stringify(clean));
+      } catch(e){}
+    };
+
+    function markRemoved(id, type){
+      const m = getRemovedMap();
+      m[`${type}:${id}`] = Date.now();
+      setRemovedMap(m);
+    }
+    function unmarkRemoved(id, type){
+      const m = getRemovedMap();
+      delete m[`${type}:${id}`];
+      setRemovedMap(m);
+    }
+
+    // --- Cloud Sync via GitHub Actions Variable (NEWSHUB_SYNC) ---
+    function setSyncUI(text, color = 'var(--muted)'){
+      const el = document.getElementById('sync-status');
+      if(el){ el.innerHTML = text; el.style.color = color; }
+    }
+
+    function manualSyncClick(){
+      const tk = localStorage.getItem('gh_token');
+      if(!tk){
+        triggerWorkflow();
+      } else {
+        pullCloudSync(true);
+      }
+    }
+
+    function scheduleCloudPush(){
+      if(!localStorage.getItem('gh_token')) return;
+      clearTimeout(syncPushTimer);
+      setSyncUI('☁️ ⏳', 'var(--muted)');
+      syncPushTimer = setTimeout(() => pushCloudSync(), 2200);
+    }
+
+    async function pullCloudSync(showFeedback = false){
+      const tk = localStorage.getItem('gh_token');
+      if(!tk || isSyncing) return;
+      isSyncing = true;
+      setSyncUI('☁️ 🔄', 'var(--muted)');
+      try {
+        const r = await fetch(SYNC_VAR_URL, {
+          headers: {'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + tk},
+          cache: 'no-store'
+        });
+        if(r.status === 404){
+          isSyncing = false;
+          await pushCloudSync();
+          return;
+        }
+        if(!r.ok) throw new Error(r.status);
+        const data = await r.json();
+        const remote = JSON.parse(data.value || '{}');
+
+        const localRem = getRemovedMap(), remoteRem = remote.rem || {};
+        const mergedRem = {...localRem};
+        for(const [k, ts] of Object.entries(remoteRem)){
+          if(!mergedRem[k] || ts > mergedRem[k]) mergedRem[k] = ts;
+        }
+        setRemovedMap(mergedRem);
+
+        const valid = new Set(globalArticles.map(a => String(hStr(a.link||''))));
+        const mergeList = (localKey, remoteArr, typePrefix) => {
+          const loc = getStorage(localKey);
+          const combined = Array.from(new Set([...loc, ...(remoteArr || [])])).filter(id => {
+            if(valid.size > 0 && !valid.has(id)) return false;
+            return !mergedRem[`${typePrefix}:${id}`];
+          });
+          setStorage(localKey, combined);
+          return combined;
+        };
+
+        const newRead = mergeList('read_news', remote.r, 'r');
+        const newSeen = mergeList('seen_news', remote.s, 's');
+        const newBm   = mergeList('bookmarked_news', remote.b, 'b');
+
+        // Aktualisiere DOM-Karten ohne komplettes Neu-Rendern (verhindert Scroll-Sprünge)
+        document.querySelectorAll('.feed-card').forEach(c => {
+          const id = c.dataset.id;
+          c.classList.toggle('read', newRead.includes(id));
+          c.classList.toggle('seen', newSeen.includes(id));
+          c.classList.toggle('bookmarked', newBm.includes(id));
+        });
+        updateBookmarkCount();
+        updateUnreadCount();
+        if(onlyUnread || onlySaved) applyFilters();
+
+        setSyncUI('☁️ ✓', 'var(--accent)');
+        if(showFeedback) showToast('☁️ Lese-Status synchronisiert!', 2000);
+      } catch(e){
+        setSyncUI('☁️ ⚠️', '#eab308');
+      } finally {
+        isSyncing = false;
+      }
+    }
+
+    async function pushCloudSync(){
+      const tk = localStorage.getItem('gh_token');
+      if(!tk) return;
+      try {
+        const payloadObj = {
+          r: getStorage('read_news').slice(-600),
+          s: getStorage('seen_news').slice(-600),
+          b: getStorage('bookmarked_news').slice(-200),
+          rem: getRemovedMap(),
+          t: Date.now()
+        };
+        const valStr = JSON.stringify(payloadObj);
+        let r = await fetch(SYNC_VAR_URL, {
+          method: 'PATCH',
+          headers: {'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + tk},
+          body: JSON.stringify({name: 'NEWSHUB_SYNC', value: valStr})
+        });
+        if(r.status === 404){
+          r = await fetch(SYNC_VARS_CREATE_URL, {
+            method: 'POST',
+            headers: {'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + tk},
+            body: JSON.stringify({name: 'NEWSHUB_SYNC', value: valStr})
+          });
+        }
+        if(r.ok || r.status === 204 || r.status === 201){
+          setSyncUI('☁️ ✓', 'var(--accent)');
+        } else {
+          setSyncUI('☁️ ⚠️', '#eab308');
+        }
+      } catch(e){
+        setSyncUI('☁️ ⚠️', '#eab308');
+      }
+    }
 
     function showToast(htmlMsg, autoHideMs = 6000){
       clearTimeout(toastTimer);
@@ -832,11 +973,20 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     function toggleBookmark(id){
       let b = getStorage('bookmarked_news'); const idx = b.indexOf(id);
       const el = document.querySelector(`.feed-card[data-id="${id}"]`);
-      if(idx >= 0){ b.splice(idx, 1); if(el) el.classList.remove('bookmarked'); }
-      else { b.push(id); if(el) el.classList.add('bookmarked'); if(navigator.vibrate) navigator.vibrate(20); }
+      if(idx >= 0){
+        b.splice(idx, 1);
+        markRemoved(id, 'b');
+        if(el) el.classList.remove('bookmarked');
+      } else {
+        b.push(id);
+        unmarkRemoved(id, 'b');
+        if(el) el.classList.add('bookmarked');
+        if(navigator.vibrate) navigator.vibrate(20);
+      }
       setStorage('bookmarked_news', b);
       updateBookmarkCount();
       if(onlySaved) applyFilters();
+      scheduleCloudPush();
     }
 
     function toggleSortUnseen(){
@@ -876,10 +1026,12 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         const id = String(hStr(a.link||''));
         if(!r.includes(id)) r.push(id);
         if(!s.includes(id)) s.push(id);
+        unmarkRemoved(id, 'r'); unmarkRemoved(id, 's'); markRemoved(id, 'b');
       });
       setStorage('read_news', r); setStorage('seen_news', s); setStorage('bookmarked_news', []);
       document.querySelectorAll('.feed-card.bookmarked').forEach(c => { c.classList.remove('bookmarked'); c.classList.add('read', 'seen'); });
       updateBookmarkCount(); updateUnreadCount(); showToast(`🚀 ${toOpen.length} Artikel geöffnet.`, 3000); toggleSavedFilter();
+      scheduleCloudPush();
     }
 
     function toggleRead(id){
@@ -890,29 +1042,37 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       if(isMarked){
         r = r.filter(x => x !== id);
         s = s.filter(x => x !== id);
+        markRemoved(id, 'r');
+        markRemoved(id, 's');
         if(el) el.classList.remove('read', 'seen');
       } else {
         r.push(id);
         if(!s.includes(id)) s.push(id);
+        unmarkRemoved(id, 'r');
+        unmarkRemoved(id, 's');
         if(el) el.classList.add('read', 'seen');
       }
       setStorage('read_news', r);
       setStorage('seen_news', s);
       updateUnreadCount();
       if(onlyUnread) applyFilters();
+      scheduleCloudPush();
     }
 
     function markAllRead(){
       const r = getStorage('read_news'), s = getStorage('seen_news');
       document.querySelectorAll('.feed-card').forEach(c => {
+        const id = c.dataset.id;
         c.classList.add('read', 'seen');
-        if(!r.includes(c.dataset.id)) r.push(c.dataset.id);
-        if(!s.includes(c.dataset.id)) s.push(c.dataset.id);
+        if(!r.includes(id)) r.push(id);
+        if(!s.includes(id)) s.push(id);
+        unmarkRemoved(id, 'r'); unmarkRemoved(id, 's');
       });
       setStorage('read_news', r);
       setStorage('seen_news', s);
       updateUnreadCount();
       if(onlyUnread) applyFilters();
+      scheduleCloudPush();
     }
 
     function renderOtherSources(a) {
@@ -1096,7 +1256,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       if(!tk){
         showToast(`
           <div style="display:flex;flex-direction:column;gap:6px">
-            <span>GitHub PAT:</span>
+            <span>GitHub PAT (für Sync & Action-Start):</span>
             <div style="display:flex;gap:6px">
               <input type="password" id="toast-token-inp" class="search-input" style="padding:4px 8px;font-size:.8rem;height:28px" placeholder="ghp_...">
               <button class="btn" style="font-size:.8rem;padding:4px 8px;height:28px" onclick="saveToastToken()">OK</button>
@@ -1108,7 +1268,12 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
     function saveToastToken(){
       const el = document.getElementById('toast-token-inp');
-      if(el && el.value.trim()){ const val = el.value.trim(); localStorage.setItem('gh_token', val); dispatchWorkflow(val); }
+      if(el && el.value.trim()){
+        const val = el.value.trim();
+        localStorage.setItem('gh_token', val);
+        pullCloudSync(true);
+        dispatchWorkflow(val);
+      }
     }
 
     async function dispatchWorkflow(tk){
@@ -1331,6 +1496,11 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
         renderUI(liveArticles);
 
+        // Starte initialen Cloud-Sync im Hintergrund
+        if(localStorage.getItem('gh_token')){
+          pullCloudSync(false);
+        }
+
         const timers = new Map(), obs = new IntersectionObserver(ents => {
           ents.forEach(e => {
             const id = e.target.dataset.id;
@@ -1340,8 +1510,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
                 const s = getStorage('seen_news');
                 if(!s.includes(id)){
                   s.push(id);
+                  unmarkRemoved(id, 's');
                   setStorage('seen_news', s);
                   updateUnreadCount();
+                  scheduleCloudPush();
                 }
                 e.target.classList.add('seen');
                 obs.unobserve(e.target);
@@ -1380,6 +1552,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         if(Date.now() - lastFetchTs > 900000){
           reloadDataSilent(true);
         } else {
+          pullCloudSync(false);
           document.querySelectorAll('.feed-card').forEach(c => {
             const art = liveArticles.find(a => String(hStr(a.link||'')) === c.dataset.id);
             if(art && art.published) c.querySelector('.feed-time').textContent = relTime(art.published);
@@ -1430,7 +1603,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v21';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v22';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
