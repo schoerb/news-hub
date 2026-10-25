@@ -145,7 +145,7 @@ def decrypt_payload(enc: str, pw: str) -> str:
         if not raw.startswith(b"Salted__"):
             return enc
         key, iv = openssl_kdf(pw.encode(), raw[8:16])
-        c = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
+        c = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
         d = c.update(raw[16:]) + c.finalize()
         return d[:-d[-1]].decode("utf-8")
     except Exception:
@@ -805,11 +805,14 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   <div id="reader-modal" class="modal-overlay" onclick="if(event.target===this)toggleModal('reader-modal',false)">
     <div class="modal-card reader-modal">
       <div class="modal-header">
-        <div>
+        <div style="flex:1;min-width:0">
           <div id="reader-meta" style="font-size:.78rem;color:var(--accent);font-weight:600;margin-bottom:4px"></div>
           <h2 id="reader-title" style="font-size:1.15rem;line-height:1.35;color:var(--bold)"></h2>
         </div>
-        <button class="btn" onclick="toggleModal('reader-modal',false)">&times;</button>
+        <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+          <button class="btn" onclick="shareCurrentReaderArticle()" title="Artikel teilen">📤</button>
+          <button class="btn" onclick="toggleModal('reader-modal',false)">&times;</button>
+        </div>
       </div>
       <div id="reader-body" class="modal-body reader-content"></div>
       <div style="display:flex;gap:10px;margin-top:14px;padding-top:10px;border-top:1px solid var(--border)">
@@ -934,12 +937,22 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     function toggleTheme(){ const t = document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark'; document.documentElement.setAttribute('data-theme',t); localStorage.setItem('hub_theme',t); }
     function toggleSidebar(){
       const sb = document.getElementById('sidebar');
-      if(window.innerWidth<=768){ sb.classList.toggle('open'); document.getElementById('backdrop').classList.toggle('open'); }
-      else { sb.classList.toggle('collapsed'); localStorage.setItem('sidebar_closed', sb.classList.contains('collapsed')); }
+      if(window.innerWidth<=768){
+        const willOpen = !sb.classList.contains('open');
+        sb.classList.toggle('open', willOpen);
+        document.getElementById('backdrop').classList.toggle('open', willOpen);
+        if(willOpen && (!history.state || history.state.modal !== 'sidebar')){
+          history.pushState({ modal: 'sidebar' }, '');
+        } else if(!willOpen && history.state && history.state.modal === 'sidebar'){
+          history.back();
+        }
+      } else {
+        sb.classList.toggle('collapsed');
+        localStorage.setItem('sidebar_closed', sb.classList.contains('collapsed'));
+      }
     }
 
-    // --- Modal-Steuerung mit Browser-History (für Zurück-Wischgeste am Smartphone) ---
-    function toggleModal(id, open, fromPopState = false){
+    function toggleModal(id, open){
       const el = document.getElementById(id);
       if(!el) return;
       const isCurrentlyOpen = el.style.display === 'flex';
@@ -950,7 +963,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         }
       } else {
         el.style.display = 'none';
-        if(isCurrentlyOpen && !fromPopState && history.state && history.state.modal === id){
+        if(isCurrentlyOpen && history.state && history.state.modal === id){
           history.back();
         }
       }
@@ -985,7 +998,21 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     function markRemoved(id, type){ const m = getRemovedMap(); m[`${type}:${id}`] = Date.now(); setRemovedMap(m); }
     function unmarkRemoved(id, type){ const m = getRemovedMap(); delete m[`${type}:${id}`]; setRemovedMap(m); }
 
+    function updateOnlineStatusUI(){
+      const el = document.getElementById('offline-status');
+      if(!el) return;
+      if(!navigator.onLine){
+        el.innerHTML = '⚡ Offline-Modus';
+        el.style.color = '#eab308';
+      } else {
+        loadLocalOfflineCache();
+      }
+    }
+    window.addEventListener('online', updateOnlineStatusUI);
+    window.addEventListener('offline', updateOnlineStatusUI);
+
     function loadLocalOfflineCache(){
+      if(!navigator.onLine){ updateOnlineStatusUI(); return; }
       try {
         offlineMap = JSON.parse(localStorage.getItem('offline_articles_48h') || '{}');
         const cnt = Object.keys(offlineMap).length;
@@ -1025,7 +1052,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
           if(manualTrigger && 'caches' in window){
             const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 80);
-            caches.open('news-hub-v27').then(cache => {
+            caches.open('news-hub-v28').then(cache => {
               imgUrls.forEach(u => fetch(u, {mode: 'no-cors'}).then(res => cache.put(u, res)).catch(()=>{}));
             });
             showToast(`✅ ${cnt} Artikel + Bilder für Offline-Modus gespeichert!`, 3500);
@@ -1037,15 +1064,17 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       }
     }
 
+    let currentReaderUrl = '';
     function openReaderModal(id){
       const art = liveArticles.find(a => String(hStr(a.link||'')) === String(id)) || globalArticles.find(a => String(hStr(a.link||'')) === String(id));
       if(!art) return;
 
       if(!getStorage('read_news').includes(String(id))) toggleRead(String(id));
 
+      currentReaderUrl = art.link || '';
       document.getElementById('reader-meta').textContent = `${art.source || 'News'} • ${relTime(art.published)}${!navigator.onLine ? ' • ⚡ OFFLINE-MODUS' : ''}`;
       document.getElementById('reader-title').textContent = art.title || '';
-      document.getElementById('reader-orig-link').href = art.link || '#';
+      document.getElementById('reader-orig-link').href = currentReaderUrl;
 
       const fullHtml = offlineMap[art.link] || '';
       const imgHtml = art.image ? `<img class="reader-thumb" src="${escAttr(art.image)}" referrerpolicy="no-referrer" onerror="this.remove()">` : '';
@@ -1055,6 +1084,11 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       bodyEl.innerHTML = imgHtml + summaryBox + (fullHtml || `<p style="color:var(--muted)">Für diesen Artikel ist nur die KI-Zusammenfassung offline hinterlegt. Klicke unten auf „Original-Webseite öffnen“, sobald du wieder Empfang hast.</p>`);
       bodyEl.scrollTop = 0;
       toggleModal('reader-modal', true);
+    }
+
+    async function shareCurrentReaderArticle(){
+      const title = document.getElementById('reader-title').textContent;
+      if(currentReaderUrl) await shareArticle(title, currentReaderUrl);
     }
 
     function handleArticleClick(e, id, url){
@@ -1646,6 +1680,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     async function init(){
       initTheme();
       loadLocalOfflineCache();
+      updateOnlineStatusUI();
       if(window.innerWidth>768 && localStorage.getItem('sidebar_closed')==='true') document.getElementById('sidebar').classList.add('collapsed');
       
       const scroller = document.getElementById('main-scroller');
@@ -1907,7 +1942,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v27';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v28';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
