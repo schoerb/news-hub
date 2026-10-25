@@ -1,6 +1,6 @@
 # ⚡ News-Hub
 
-Ein leichtgewichtiger, selbst gehosteter RSS-News-Aggregator mit automatischer Deduplizierung, Gemini-gestützter Zusammenfassung/Übersetzung, AES-Verschlüsselung, **geräteübergreifendem Lese-Sync** und einem **integrierten Offline-Lesemodus (Reader Mode)** für Live-Feed und Archiv.
+Ein leichtgewichtiger, selbst gehosteter RSS-News-Aggregator mit automatischer Deduplizierung, Gemini-gestützter Zusammenfassung/Übersetzung, AES-Verschlüsselung, **gerätedynamischem Lese-Sync** und einem **integrierten Offline-Lesemodus (Reader Mode)** für Live-Feed und Archiv.
 
 Gehostet via **GitHub Pages**, vollautomatisiert über **GitHub Actions**.
 
@@ -9,9 +9,16 @@ Gehostet via **GitHub Pages**, vollautomatisiert über **GitHub Actions**.
 ## ✨ Features
 
 - **Automatisierte Feed-Verarbeitung & Remote-Cache:** Liest Feeds per OPML ein, synchronisiert `cache_meta.json` (`ETag` / `Last-Modified`) automatisch mit GitHub Pages für schnelle `304 Not Modified`-Abfragen und nutzt adaptive Timeouts für langsame Server.
+- **Smartes Deployment:** Schreibt das `deploy`-Flag nur bei echten Änderungen in den Action-Output (erzeugt keine unnötigen Commits, wenn 0 neue Artikel vorliegen).
 - **KI-Zusammenfassung & Übersetzung:** Nutzt die Google Gemini API, um fremdsprachige Artikel ins Deutsche zu übersetzen und auf genau einen Satz mit prägnanten Fettungen einzudampfen.
-- **Integrierter Offline-Lesemodus (Reader Mode):** Extrahiert bei neuen Artikeln der letzten 48 Stunden (inklusive Archiv) vollautomatisch im Hintergrund den reinen Volltext (ohne Werbung, Skripte und Cookie-Banner) und speichert ihn in `offline.json`. Ein Klick auf das Buch-Symbol (`📖`) oder das Öffnen im Flugmodus öffnet den Volltext direkt in der App.
+- **Integrierter Offline-Lesemodus (Reader Mode):** Extrahiert bei neuen Artikeln der letzten 48 Stunden (Live-Feed & Archiv) vollautomatisch im Hintergrund den reinen Volltext (ohne Werbung, Skripte und Cookie-Banner) und speichert ihn in `offline.json`. Ein Klick auf das Buch-Symbol (`📖`) oder das Öffnen im Flugmodus öffnet den Volltext direkt in der App.
+- **Live-Online/Offline-Indikator:** Erkennt in Echtzeit, ob eine Internetverbindung besteht, und schaltet die Anzeige in der Kopfleiste automatisch zwischen `📥 Offline` und `⚡ Offline-Modus` um.
+- **Native Zurück-Geste (History API):** Eine Zurück-Wischgeste am Smartphone (oder die Zurück-Taste im Browser) schließt geöffnete Modals wie den Lesemodus (`📖`), Duplikate oder die Seitenleiste sauber, sodass du exakt an deiner vorherigen Scroll-Position im Feed bleibst.
 - **Geräteübergreifender Echtzeit-Sync (PC ↔ Smartphone):** Synchronisiert gelesene/gesehene Artikel sowie Lesezeichen (`🔖`) im Hintergrund über eine GitHub-Actions-Variable (`NEWSHUB_SYNC`), ohne Git-Müll oder Commit-Historie.
+- **Ergonomische Karten-Bedienung:**
+  - **Quellname als Teilen-Button:** Ein Klick auf den grünen Feed-Namen (z. B. *Heise*) teilt den Artikel bzw. kopiert den Link (am Desktop mit `📤 Teilen`-Hover-Effekt).
+  - **Zeitangabe als Bulk-Action („Ab hier abwärts gelesen“):** Ein Klick auf `vor Xh` zeigt den exakten Zeitstempel im Toast und markiert diesen sowie alle darunterliegenden (älteren) Artikel der aktuellen Ansicht in einem Rutsch als gelesen.
+  - **Optimierte Touch-Targets:** Großzügige Klickflächen für Lesezeichen (`🔖` links) und Lesemodus (`📖` rechts hinter der Zeitangabe).
 - **Smarte Bildextraktion (`srcset`) & Hotlink-Schutz:** Wählt aus `srcset`-Attributen automatisch die optimale Auflösung (500–1200px), filtert Tracker, Logos und „Related Posts“-Bilder aus und prüft Bild-URLs über Gemini.
 - **Präzise Cross-Language Deduplizierung:** Verhindert Fehlverschmelzungen bei Versions-/Modellnummern (z. B. *iPhone 16* vs. *Galaxy 16GB*) durch mehrsprachigen Keyword-Overlap und `SequenceMatcher`.
 - **Klickbare Zweitquellen:** Unter zusammengeführten Artikeln (`• Auch bei: ...`) sind alle weiteren Quellen direkt mit ihren jeweiligen Original-Artikeln verlinkt.
@@ -25,8 +32,8 @@ Gehostet via **GitHub Pages**, vollautomatisiert über **GitHub Actions**.
   - **Kurzer Zug (25px–179px):** Lädt lautlos die lokale `data.json` nach (`↓ Lokale Feeds laden`).
   - **Tiefer Zug (ab 180px):** Schaltet mit haptischem Feedback (Vibration) um und triggert den entfernten GitHub Actions Workflow (`🚀 Workflow starten`).
 - **Ende-zu-Ende-Verschlüsselung:** Verschlüsselt `data.json` und `offline.json` via AES-CBC (OpenSSL/CryptoJS-kompatibel), falls ein Seitenpasswort vergeben ist.
-- **Progressive Web App (PWA):** Offline-Fallback dank Service Worker (`news-hub-v25`) mit Network-First-Strategie.
-- **Stundengenaue Zeitangaben & Archiv:** Zeigt das Alter von Artikeln ab 60 Minuten durchgehend in Stunden an (`vor Xh`) und trennt automatisch zwischen Live-Feed (letzte 24h) und Archiv (24–48h) – inklusive vollem Sync- und Offline-Support.
+- **Progressive Web App (PWA):** Offline-Fallback dank Service Worker (`news-hub-v28`) mit Network-First-Strategie.
+- **Stundengenaue Zeitangaben & Archiv:** Zeigt das Alter von Artikeln ab 60 Minuten durchgehend in Stunden an (`vor Xh`) und trennt automatisch zwischen Live-Feed (letzte 24h) und Archiv (24–48h) – bei voller Feature-Parität.
 
 ---
 
@@ -38,7 +45,7 @@ Lege unter **Settings > Secrets and variables > Actions** folgende Einträge an:
 
 | Secret / Variable | Erforderlich | Beschreibung |
 |---|---|---|
-| `GEMINI_API_KEY` | Ja | Google AI Studio API-Key für Zusammenfassungen und Übersetzungen. |
+| `GEMINI_API_KEY` | Ja | Google AI Studio API-Key für Zusammenfassungen und Übersetzungen (kostenlose Stufe absolut ausreichend). |
 | `FEEDS_OPML` | Nein | Rohinhalt deiner OPML-Datei als String (Fallback: `feeds.opml` im Repo-Root). |
 | `PAGE_PASSWORD` | Nein | Passwort zur AES-Verschlüsselung der `data.json` / `offline.json` (leer lassen für Plaintext). |
 | `FEED_PRIORITIES` | Nein | JSON-Objekt zur Priorisierung bestimmter Feeds, z. B. `{"Heise": 2, "Golem": 2}`. |
@@ -68,7 +75,13 @@ Um den Geräte-Sync zu aktivieren und Workflows aus der Web-App heraus zu starte
 ## 📱 Bedienung & Gesten
 
 - **Kopfleiste (Tap-to-Top):** Ein Tipp auf den Header-Titel scrollt den Feed sanft ganz nach oben.
-- **Offline-Modus Vorwärmen (`📥 Offline`):** Ein Klick lädt alle Volltexte und Vorschaubilder der letzten 48h in den Browser-Cache. Im Flugmodus öffnen sich Artikel automatisch im Reader Mode (`📖`).
+- **Offline-Modus Vorwärmen (`📥 Offline`):** Ein Klick lädt alle Volltexte und Vorschaubilder der letzten 48h in den Browser-Cache. Im Flugmodus oder Offline-Zustand öffnen sich Artikel automatisch im Reader Mode (`📖`).
+- **Aktionen in der Artikel-Kopfzeile:**
+  - `🔖`: Lesezeichen setzen / entfernen.
+  - **Grüner Quellname** (z. B. *Heise*): Artikel teilen / Link in die Zwischenablage kopieren.
+  - **Status-Punkt** (`🟢` / `⚪`): Gelesen-Status umschalten.
+  - **Zeitangabe** (`vor Xh`): Exakte Uhrzeit anzeigen und alle älteren Artikel ab dieser Position abwärts als gelesen markieren.
+  - `📖`: Werbefreien Offline-Lesemodus (Reader Mode) öffnen (inkl. direktem Teilen-Button im Lesemodus).
 - **Pull-to-Refresh (Mobile):**
   - *Leichtes Herunterziehen (25–179px):* Aktualisiert die Artikel lokal aus der `data.json`.
   - *Weites Herunterziehen (ab 180px):* Startet die GitHub Action neu.
@@ -94,7 +107,7 @@ Um den Geräte-Sync zu aktivieren und Workflows aus der Web-App heraus zu starte
 
 - `.github/workflows/deploy.yml`: GitHub Actions Workflow (Cron & Dispatch)
 - `build_pages.py`: Hauptskript (Fetching, Deduplizierung, Gemini, Reader-Extractor, HTML/SW-Generator)
-- `feeds.opml`: Lokale Feedliste (Fallback to `FEEDS_OPML`)
+- `feeds.opml`: Lokale Feedliste (Fallback zu `FEEDS_OPML`)
 - `requirements.txt`: Python-Abhängigkeiten
 - `public/`: Generierte Artefakte für GitHub Pages (`index.html`, `archive.html`, `data.json`, `offline.json`, `cache_meta.json`, `sw.js`, `manifest.json`)
 
