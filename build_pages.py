@@ -145,7 +145,7 @@ def decrypt_payload(enc: str, pw: str) -> str:
         if not raw.startswith(b"Salted__"):
             return enc
         key, iv = openssl_kdf(pw.encode(), raw[8:16])
-        c = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+        c = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
         d = c.update(raw[16:]) + c.finalize()
         return d[:-d[-1]].decode("utf-8")
     except Exception:
@@ -726,18 +726,37 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     .feed-card.kb-focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-dim)}
     .feed-card.swipe-bm{border-color:#eab308;box-shadow:0 0 12px rgba(234,179,8,.25)}
     .feed-card.swipe-sh{border-color:#60a5fa;box-shadow:0 0 12px rgba(96,165,250,.25)}
-    .unread-dot-btn{background:none;border:none;padding:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px}
-    .unread-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);transition:all .2s}
+    .unread-dot-btn{background:none;border:none;padding:4px;margin:-4px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%}
+    .unread-dot-btn:hover{background:var(--hover)}
+    .unread-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);transition:all .2s}
     .feed-card.seen .unread-dot{background:var(--muted);box-shadow:none;opacity:.55}
     .feed-card.read .unread-dot{background:transparent;box-shadow:none;border:1.5px solid var(--muted);opacity:.35}
     .feed-card.read .feed-title{color:var(--muted)}
-    .action-icon-btn{background:none;border:none;padding:0;cursor:pointer;font-size:.9rem;opacity:.45;transition:all .15s;display:inline-flex;align-items:center}
-    .action-icon-btn:hover{opacity:1;transform:scale(1.15)}
-    .action-icon-btn.has-offline{opacity:.85;color:var(--accent)}
+    .action-icon-btn{
+      background:none;border:1px solid transparent;padding:3px 6px;border-radius:6px;
+      cursor:pointer;font-size:.95rem;opacity:.55;transition:all .15s;
+      display:inline-flex;align-items:center;justify-content:center;min-width:28px;min-height:26px;
+    }
+    .action-icon-btn:hover{opacity:1;background:var(--hover);border-color:var(--border);transform:scale(1.08)}
+    .action-icon-btn.has-offline{opacity:.9;color:var(--accent)}
     .feed-card.bookmarked .bookmark-btn{opacity:1;filter:drop-shadow(0 0 4px rgba(234,179,8,.6))}
-    .feed-meta{display:flex;align-items:center;gap:6px;font-size:.75rem;margin-bottom:8px;flex-wrap:wrap}
-    .feed-source{color:var(--accent);font-weight:600}
-    .feed-time,.feed-others{color:var(--muted);font-size:.72rem}
+    .feed-meta{display:flex;align-items:center;gap:6px;font-size:.76rem;margin-bottom:8px;flex-wrap:wrap}
+    .feed-source{
+      color:var(--accent);font-weight:600;background:none;border:none;padding:2px 6px;margin:-2px -4px;
+      border-radius:5px;cursor:pointer;font-family:inherit;font-size:inherit;transition:all .15s;
+      display:inline-flex;align-items:center;
+    }
+    .feed-source:hover{background:var(--accent-dim);color:var(--bold)}
+    @media (hover:hover){
+      .feed-source:hover .src-label{display:none}
+      .feed-source:hover::after{content:"📤 Teilen";color:var(--accent);font-weight:600}
+    }
+    .feed-time{
+      color:var(--muted);font-size:.73rem;background:none;border:none;padding:2px 5px;margin:-2px -3px;
+      border-radius:5px;cursor:pointer;font-family:inherit;transition:all .15s;
+    }
+    .feed-time:hover{color:var(--text);background:var(--hover);text-decoration:underline}
+    .feed-others{color:var(--muted);font-size:.72rem}
     .other-src-link{color:var(--muted);text-decoration:underline;text-decoration-color:var(--border);transition:color .15s}
     .other-src-link:hover{color:var(--link);text-decoration-color:var(--link)}
     .feed-title{font-size:1.02rem;font-weight:600;color:var(--bold);text-decoration:none;line-height:1.4;margin-bottom:8px}
@@ -799,7 +818,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       </div>
     </div>
   </div>
-  <div id="health-modal" class="modal-overlay">
+  <div id="health-modal" class="modal-overlay" onclick="if(event.target===this)toggleModal('health-modal',false)">
     <div class="modal-card">
       <div class="modal-header"><h2 id="health-modal-title">📡 Feed-Status</h2><button class="btn" onclick="toggleModal('health-modal',false)">&times;</button></div>
       <div class="modal-body">
@@ -811,7 +830,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       <button class="btn-action" onclick="toggleModal('health-modal',false)">Schließen</button>
     </div>
   </div>
-  <div id="dup-modal" class="modal-overlay">
+  <div id="dup-modal" class="modal-overlay" onclick="if(event.target===this)toggleModal('dup-modal',false)">
     <div class="modal-card">
       <div class="modal-header"><h2>🧹 Bereinigte Duplikate</h2><button class="btn" onclick="toggleModal('dup-modal',false)">&times;</button></div>
       <div id="dup-list" class="modal-body"></div>
@@ -895,6 +914,13 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     };
 
     function pad2(n){ return n < 10 ? '0' + n : n; }
+    function formatExactTime(isoStr){
+      if(!isoStr) return '';
+      const d = new Date(isoStr);
+      if(isNaN(d.getTime())) return '';
+      return `${pad2(d.getDate())}.${pad2(d.getMonth()+1)}.${d.getFullYear()} um ${pad2(d.getHours())}:${pad2(d.getMinutes())} Uhr`;
+    }
+
     function getDisplayTime(articles) {
       if (!articles || !articles.length) return buildTime;
       let maxTs = 0;
@@ -911,7 +937,39 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       if(window.innerWidth<=768){ sb.classList.toggle('open'); document.getElementById('backdrop').classList.toggle('open'); }
       else { sb.classList.toggle('collapsed'); localStorage.setItem('sidebar_closed', sb.classList.contains('collapsed')); }
     }
-    function toggleModal(id, o){ const el = document.getElementById(id); if(el) el.style.display = o ? 'flex':'none'; }
+
+    // --- Modal-Steuerung mit Browser-History (für Zurück-Wischgeste am Smartphone) ---
+    function toggleModal(id, open, fromPopState = false){
+      const el = document.getElementById(id);
+      if(!el) return;
+      const isCurrentlyOpen = el.style.display === 'flex';
+      if(open){
+        el.style.display = 'flex';
+        if(!isCurrentlyOpen && (!history.state || history.state.modal !== id)){
+          history.pushState({ modal: id }, '');
+        }
+      } else {
+        el.style.display = 'none';
+        if(isCurrentlyOpen && !fromPopState && history.state && history.state.modal === id){
+          history.back();
+        }
+      }
+    }
+
+    window.addEventListener('popstate', () => {
+      ['reader-modal', 'health-modal', 'dup-modal'].forEach(id => {
+        const el = document.getElementById(id);
+        if(el && el.style.display === 'flex'){
+          el.style.display = 'none';
+        }
+      });
+      const sb = document.getElementById('sidebar');
+      if(window.innerWidth <= 768 && sb && sb.classList.contains('open')){
+        sb.classList.remove('open');
+        document.getElementById('backdrop').classList.remove('open');
+      }
+    });
+
     const getStorage = k => { try { return JSON.parse(localStorage.getItem(k)||'[]'); } catch(e){ return []; } };
     const setStorage = (k,v) => { try { localStorage.setItem(k, JSON.stringify(v.slice(-1000))); } catch(e){} };
     const getRemovedMap = () => { try { return JSON.parse(localStorage.getItem('removed_news_map')||'{}'); } catch(e){ return {}; } };
@@ -967,7 +1025,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
           if(manualTrigger && 'caches' in window){
             const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 80);
-            caches.open('news-hub-v25').then(cache => {
+            caches.open('news-hub-v27').then(cache => {
               imgUrls.forEach(u => fetch(u, {mode: 'no-cors'}).then(res => cache.put(u, res)).catch(()=>{}));
             });
             showToast(`✅ ${cnt} Artikel + Bilder für Offline-Modus gespeichert!`, 3500);
@@ -1007,6 +1065,35 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       }
       if(!getStorage('read_news').includes(String(id))) toggleRead(String(id));
       return true;
+    }
+
+    function handleTimeClick(id){
+      const art = liveArticles.find(a => String(hStr(a.link||'')) === String(id));
+      const exactStr = art && art.published ? formatExactTime(art.published) : '';
+      const visibleCards = Array.from(document.querySelectorAll('.feed-card')).filter(c => c.style.display !== 'none');
+      const idx = visibleCards.findIndex(c => c.dataset.id === String(id));
+      if(idx < 0) return;
+
+      const r = getStorage('read_news'), s = getStorage('seen_news');
+      let markedCount = 0;
+      for(let i = idx; i < visibleCards.length; i++){
+        const cid = visibleCards[i].dataset.id;
+        if(!r.includes(cid) || !s.includes(cid)){
+          if(!r.includes(cid)) r.push(cid);
+          if(!s.includes(cid)) s.push(cid);
+          unmarkRemoved(cid, 'r'); unmarkRemoved(cid, 's');
+          visibleCards[i].classList.add('read', 'seen');
+          markedCount++;
+        }
+      }
+      setStorage('read_news', r);
+      setStorage('seen_news', s);
+      updateUnreadCount();
+      if(onlyUnread) applyFilters();
+      if(markedCount > 0) scheduleCloudPush();
+      if(navigator.vibrate) navigator.vibrate(20);
+
+      showToast(`🕒 ${exactStr ? exactStr + ' • ' : ''}${markedCount} Artikel ab hier abwärts gelesen`, 3200);
     }
 
     function setSyncUI(text, color = 'var(--muted)'){
@@ -1347,16 +1434,16 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
           const cls = (rList.includes(id)?' read':'') + (sList.includes(id)?' seen':'') + (bList.includes(id)?' bookmarked':'');
           const safeTitle = escAttr(a.title||'Ohne Titel'), safeLink = escAttr(a.link||'#'), safeSrcs = escAttr([a.source||'',...(a.other_sources||[])].join(';;;'));
           const hasOff = Boolean(offlineMap[a.link]);
+          const exactTimeTooltip = escAttr(formatExactTime(a.published));
 
           htmlBuf += `<article class="feed-card${cls}" data-id="${id}" data-link="${safeLink}" data-title="${safeTitle}" data-sources="${safeSrcs}">
             <div class="feed-content">
               <div class="feed-meta">
                 <button class="action-icon-btn bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Merken (Taste: b)">🔖</button>
-                <button class="action-icon-btn reader-btn ${hasOff?'has-offline':''}" onclick="event.stopPropagation();openReaderModal('${id}')" title="Offline-Lesemodus öffnen (Taste: v)">📖</button>
-                <button class="action-icon-btn" onclick="event.stopPropagation();shareCard(this)" title="Teilen">📤</button>
-                <span class="feed-source">${escAttr(a.source||'Quelle')}</span>
+                <button class="feed-source" onclick="event.stopPropagation();shareCard(this)" title="Link teilen / kopieren"><span class="src-label">${escAttr(a.source||'Quelle')}</span></button>
                 <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Status umschalten (Taste: m)"><span class="unread-dot"></span></button>
-                <span class="feed-time">${relTime(a.published)}</span>
+                <button class="feed-time" onclick="event.stopPropagation();handleTimeClick('${id}')" title="${exactTimeTooltip ? exactTimeTooltip + ' – ' : ''}Klicken: Ab hier abwärts als gelesen markieren">${relTime(a.published)}</button>
+                <button class="action-icon-btn reader-btn ${hasOff?'has-offline':''}" onclick="event.stopPropagation();openReaderModal('${id}')" title="Offline-Lesemodus öffnen (Taste: v)">📖</button>
                 ${oth}
               </div>
               <a class="feed-title" href="${safeLink}" target="_blank" rel="noopener" onclick="return handleArticleClick(event, '${id}', '${safeLink}')">${safeTitle}</a>
@@ -1820,7 +1907,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v25';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v27';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
@@ -1855,8 +1942,8 @@ def render_page(feed_health, feeds, is_archive=False):
                          .replace("__SIDEBAR_TITLE__", "Archiv (24–48h)" if is_archive else "News-Hub") \
                          .replace("__NAV_TARGET_URL__", "index.html" if is_archive else "archive.html") \
                          .replace("__NAV_TARGET_TEXT__", "← Zum Live-Feed" if is_archive else "📑 Zum Archiv (24–48h)") \
-                         .replace("__MARK_ALL_BTN__", "" if is_archive else '<button class="source-btn" style="text-align:center;background:var(--border)" onclick="markAllRead()">✓ Alle gelesen</button>') \
-                         .replace("__DESKTOP_REFRESH_BTN__", "" if is_archive else '<button class="btn" id="refresh-btn" onclick="triggerWorkflow()" title="GitHub Workflow starten (Taste: r)">🔄</button>') \
+                         .replace("__MARK_ALL_BTN__", '<button class="source-btn" style="text-align:center;background:var(--border)" onclick="markAllRead()">✓ Alle gelesen</button>') \
+                         .replace("__DESKTOP_REFRESH_BTN__", '<button class="btn" id="refresh-btn" onclick="triggerWorkflow()" title="GitHub Workflow starten (Taste: r)">🔄</button>') \
                          .replace("__NOW_STR__", now_str) \
                          .replace("__HEALTH_BLOCK__", h_text) \
                          .replace("__HEALTH_DATA__", json.dumps(feed_health, ensure_ascii=False)) \
