@@ -636,7 +636,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
   <style>
-    :root{--bg:#121418;--sidebar:#181b20;--card:#1e2229;--hover:#262b34;--border:#2e3440;--text:#e2e8f0;--muted:#94a3b8;--bold:#f1f5f9;--accent:#2ecc71;--accent-dim:rgba(46,204,113,.15);--link:#60a5fa}
+    :root{--bg:#121418;--sidebar:#181b20;--card:#1e2229;--hover:#262b34;--border:#2e3440;--text:#e2e8f0;--muted:#94a3b8;--bold:#f1f5f9;--accent:#2ecc71;--accent-dim:rgba(46,204,113,.15);--link:#60a5fa;--reader-font-size:.98rem}
     [data-theme="light"]{--bg:#f8fafc;--sidebar:#fff;--card:#fff;--hover:#f1f5f9;--border:#e2e8f0;--text:#1e293b;--muted:#64748b;--bold:#0f172a;--accent:#16a34a;--accent-dim:rgba(22,163,74,.12);--link:#2563eb}
     *{box-sizing:border-box;margin:0;padding:0}
     
@@ -650,14 +650,16 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     
     .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);backdrop-filter:blur(3px);z-index:1100;align-items:center;justify-content:center;padding:16px}
     .modal-card{background:var(--sidebar);border:1px solid var(--border);border-radius:12px;padding:24px;width:100%;max-width:540px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 16px 36px rgba(0,0,0,.35)}
-    .modal-card.reader-modal{max-width:720px;max-height:88vh;padding:22px}
+    .modal-card.reader-modal{max-width:720px;max-height:88vh;padding:22px;transition:transform .16s ease, opacity .16s ease;touch-action:pan-y;position:relative;overflow:hidden}
+    .reader-progress{position:absolute;top:0;left:0;height:3px;background:var(--accent);width:0%;transition:width .08s linear;z-index:10}
     .modal-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:12px;gap:12px}
     .modal-body{overflow-y:auto;flex-grow:1;font-size:.9rem}
-    .reader-content{font-size:.98rem;line-height:1.68;color:var(--text);padding-right:4px}
+    .reader-content{font-size:var(--reader-font-size, .98rem);line-height:1.68;color:var(--text);padding-right:4px;transition:font-size .12s ease}
     .reader-content p{margin-bottom:14px}
-    .reader-content h3{color:var(--bold);font-size:1.1rem;margin:18px 0 8px}
+    .reader-content h3{color:var(--bold);font-size:calc(var(--reader-font-size, .98rem) * 1.14);margin:18px 0 8px}
     .reader-content blockquote{border-left:3px solid var(--accent);padding-left:12px;color:var(--muted);margin:12px 0;font-style:italic}
     .reader-thumb{width:100%;max-height:280px;object-fit:cover;border-radius:8px;margin-bottom:16px}
+    .reader-nav-pos{font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums;min-width:36px;text-align:center}
     .modal-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:12px}
     .btn, .btn-open-all{
       background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);
@@ -665,6 +667,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;
       user-select:none;-webkit-user-select:none;gap:4px;
     }
+    .btn:disabled{opacity:.3;cursor:default}
     .btn.active{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
     .btn-open-all{background:var(--accent);border-color:var(--accent);color:#fff;font-size:.85rem;font-weight:600;display:none;white-space:nowrap}
     .btn-action{width:100%;background:var(--accent);color:#fff;border:none;padding:12px;border-radius:6px;font-weight:600;cursor:pointer;margin-top:14px}
@@ -673,8 +676,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     .sidebar.collapsed{width:0!important;border:none!important;visibility:hidden}
     .sidebar-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
     .source-list{list-style:none;padding:12px;overflow-y:auto;flex-grow:1}
+    .sidebar-section-title{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);padding:14px 14px 6px;margin-top:6px;border-top:1px solid var(--border)}
     .source-btn{width:100%;text-align:left;padding:10px 14px;margin-bottom:4px;border-radius:6px;background:transparent;border:none;color:var(--muted);font-size:.85rem;font-weight:500;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px}
     .source-btn:hover,.source-btn.active{background:var(--accent-dim);color:var(--accent);font-weight:600}
+    .source-btn.exclude-active{background:rgba(239,68,68,.12);color:#ef4444;font-weight:600}
     .badge-group{display:inline-flex;align-items:center;gap:4px}
     .badge{background:var(--border);padding:2px 7px;border-radius:10px;font-size:.7rem;color:var(--muted);font-weight:500}
     .badge-new{background:var(--accent);color:#fff;font-weight:700}
@@ -725,7 +730,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     .feed-card:hover{transform:translateY(-2px);background:var(--hover)}
     .feed-card.kb-focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-dim)}
     .feed-card.swipe-bm{border-color:#eab308;box-shadow:0 0 12px rgba(234,179,8,.25)}
-    .feed-card.swipe-sh{border-color:#60a5fa;box-shadow:0 0 12px rgba(96,165,250,.25)}
+    .feed-card.swipe-rd{border-color:var(--accent);box-shadow:0 0 12px var(--accent-dim)}
     .unread-dot-btn{background:none;border:none;padding:4px;margin:-4px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%}
     .unread-dot-btn:hover{background:var(--hover)}
     .unread-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);transition:all .2s}
@@ -803,18 +808,23 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     </div>
   </div>
   <div id="reader-modal" class="modal-overlay" onclick="if(event.target===this)toggleModal('reader-modal',false)">
-    <div class="modal-card reader-modal">
+    <div class="modal-card reader-modal" id="reader-card">
+      <div id="reader-progress" class="reader-progress"></div>
       <div class="modal-header">
         <div style="flex:1;min-width:0">
           <div id="reader-meta" style="font-size:.78rem;color:var(--accent);font-weight:600;margin-bottom:4px"></div>
           <h2 id="reader-title" style="font-size:1.15rem;line-height:1.35;color:var(--bold)"></h2>
         </div>
-        <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
+        <div style="display:flex;gap:5px;align-items:center;flex-shrink:0">
+          <button class="btn" id="reader-prev-btn" onclick="navigateReader(-1)" title="Vorheriger Artikel (Pfeil links / Nach rechts wischen)">‹</button>
+          <span id="reader-pos" class="reader-nav-pos"></span>
+          <button class="btn" id="reader-next-btn" onclick="navigateReader(1)" title="Nächster Artikel (Pfeil rechts / Nach links wischen)">›</button>
+          <button class="btn" id="reader-font-btn" onclick="cycleReaderFontSize()" title="Schriftgröße anpassen (Taste: + / -)" style="font-size:.82rem;font-weight:700">Aa</button>
           <button class="btn" onclick="shareCurrentReaderArticle()" title="Artikel teilen">📤</button>
           <button class="btn" onclick="toggleModal('reader-modal',false)">&times;</button>
         </div>
       </div>
-      <div id="reader-body" class="modal-body reader-content"></div>
+      <div id="reader-body" class="modal-body reader-content" onscroll="updateReaderProgress()"></div>
       <div style="display:flex;gap:10px;margin-top:14px;padding-top:10px;border-top:1px solid var(--border)">
         <a id="reader-orig-link" href="#" target="_blank" rel="noopener" class="btn-action" style="margin-top:0;text-align:center;text-decoration:none;flex:1">Original-Webseite öffnen ↗</a>
         <button class="btn" style="padding:10px 16px" onclick="toggleModal('reader-modal',false)">Schließen</button>
@@ -893,7 +903,72 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     const configuredSources = __CONFIGURED_SOURCES__, feedHealth = __HEALTH_DATA__, buildTime = "__NOW_STR__";
     const SYNC_VAR_URL = "https://api.github.com/repos/schoerb/news-hub/actions/variables/NEWSHUB_SYNC";
     const SYNC_VARS_CREATE_URL = "https://api.github.com/repos/schoerb/news-hub/actions/variables";
-    let rawData = "", globalArticles = [], liveArticles = [], offlineMap = {}, counts = {}, activeSource = 'all', searchQuery = '', onlySaved = false, onlyUnread = false, sortUnseenFirst = localStorage.getItem('sort_unseen') === 'true', kbIndex = -1, sTimer = null, toastTimer = null, pollInterval = null, syncPushTimer = null, isSyncing = false, lastFetchTs = Date.now();
+    let rawData = "", globalArticles = [], liveArticles = [], offlineMap = {}, counts = {}, tagCounts = {}, activeSource = 'all', activeTag = '', searchQuery = '', onlySaved = false, onlyUnread = false, sortUnseenFirst = localStorage.getItem('sort_unseen') === 'true', kbIndex = -1, sTimer = null, toastTimer = null, pollInterval = null, syncPushTimer = null, isSyncing = false, lastFetchTs = Date.now();
+    let currentReaderId = '', currentReaderUrl = '';
+
+    const COMMON_TAGS = ['Linux', 'KI / AI', 'Docker', 'Security', 'Apple', 'Windows', 'Python', 'Cloud', 'Hardware', 'Mobile'];
+    const TAG_KEYWORDS = {
+      'Linux': ['linux', 'ubuntu', 'debian', 'kernel', 'arch', 'fedora'],
+      'KI / AI': ['ki', 'ai', 'gpt', 'gemini', 'llm', 'openai', 'anthropic', 'claude', 'chatgpt'],
+      'Docker': ['docker', 'container', 'kubernetes', 'k8s', 'podman'],
+      'Security': ['security', 'cve', 'schwachstelle', 'exploit', 'hacker', 'malware', 'update', 'patch'],
+      'Apple': ['apple', 'iphone', 'ipad', 'macbook', 'macos', 'ios'],
+      'Windows': ['windows', 'microsoft', 'win11', 'win10'],
+      'Python': ['python', 'pip', 'py'],
+      'Cloud': ['cloud', 'aws', 'azure', 'gcp', 'serverless'],
+      'Hardware': ['hardware', 'cpu', 'gpu', 'amd', 'intel', 'nvidia', 'ssd', 'ram'],
+      'Mobile': ['android', 'smartphone', 'pixel', 'galaxy', 'samsung']
+    };
+
+    function getArticleTags(art){
+      const text = `${art.title || ''} ${art.summary || ''}`.toLowerCase();
+      const tags = [];
+      for(const [tagName, kws] of Object.entries(TAG_KEYWORDS)){
+        if(kws.some(kw => text.includes(kw))){
+          tags.push(tagName);
+        }
+      }
+      return tags;
+    }
+
+    const READER_FONTS = [
+      { size: '0.88rem', label: 'Klein (90%)' },
+      { size: '0.98rem', label: 'Standard (100%)' },
+      { size: '1.12rem', label: 'Groß (115%)' },
+      { size: '1.26rem', label: 'Sehr groß (130%)' }
+    ];
+    let readerFontIdx = parseInt(localStorage.getItem('reader_font_idx') || '1', 10);
+    if(isNaN(readerFontIdx) || readerFontIdx < 0 || readerFontIdx >= READER_FONTS.length) readerFontIdx = 1;
+
+    function applyReaderFont(){
+      document.documentElement.style.setProperty('--reader-font-size', READER_FONTS[readerFontIdx].size);
+      const btn = document.getElementById('reader-font-btn');
+      if(btn) btn.classList.toggle('active', readerFontIdx !== 1);
+    }
+
+    function changeReaderFontSize(delta){
+      readerFontIdx = Math.max(0, Math.min(READER_FONTS.length - 1, readerFontIdx + delta));
+      localStorage.setItem('reader_font_idx', readerFontIdx);
+      applyReaderFont();
+      showToast(`🔠 Schriftgröße: ${READER_FONTS[readerFontIdx].label}`, 1600);
+    }
+
+    function cycleReaderFontSize(){
+      readerFontIdx = (readerFontIdx + 1) % READER_FONTS.length;
+      localStorage.setItem('reader_font_idx', readerFontIdx);
+      applyReaderFont();
+      showToast(`🔠 Schriftgröße: ${READER_FONTS[readerFontIdx].label}`, 1600);
+    }
+
+    function updateReaderProgress(){
+      const body = document.getElementById('reader-body');
+      const bar = document.getElementById('reader-progress');
+      if(!body || !bar) return;
+      const st = body.scrollTop;
+      const sh = body.scrollHeight - body.clientHeight;
+      const pct = sh > 0 ? (st / sh) * 100 : 0;
+      bar.style.width = `${pct}%`;
+    }
 
     if('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 
@@ -1052,7 +1127,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
           if(manualTrigger && 'caches' in window){
             const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 80);
-            caches.open('news-hub-v28').then(cache => {
+            caches.open('news-hub-v36').then(cache => {
               imgUrls.forEach(u => fetch(u, {mode: 'no-cors'}).then(res => cache.put(u, res)).catch(()=>{}));
             });
             showToast(`✅ ${cnt} Artikel + Bilder für Offline-Modus gespeichert!`, 3500);
@@ -1064,15 +1139,67 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       }
     }
 
-    let currentReaderUrl = '';
-    function openReaderModal(id){
+    function openReaderModal(id, slideDir = 0){
       const art = liveArticles.find(a => String(hStr(a.link||'')) === String(id)) || globalArticles.find(a => String(hStr(a.link||'')) === String(id));
       if(!art) return;
 
-      if(!getStorage('read_news').includes(String(id))) toggleRead(String(id));
+      currentReaderId = String(id);
+      if(!getStorage('read_news').includes(currentReaderId)){
+        let r = getStorage('read_news'), s = getStorage('seen_news');
+        r.push(currentReaderId);
+        if(!s.includes(currentReaderId)) s.push(currentReaderId);
+        unmarkRemoved(currentReaderId, 'r');
+        unmarkRemoved(currentReaderId, 's');
+        const cardEl = document.querySelector(`.feed-card[data-id="${currentReaderId}"]`);
+        if(cardEl) cardEl.classList.add('read', 'seen');
+        setStorage('read_news', r);
+        setStorage('seen_news', s);
+        updateUnreadCount();
+        scheduleCloudPush();
+      }
+
+      let navigationPool = [];
+      const excludedList = getStorage('excluded_keywords');
+      const isCardShown = c => {
+        if(c.style.display === 'none') return false;
+        if(activeTag && !(c.dataset.tags || '').split(';;;').includes(activeTag)) return false;
+        if(onlySaved && !getStorage('bookmarked_news').includes(c.dataset.id)) return false;
+        return true;
+      };
+
+      navigationPool = Array.from(document.querySelectorAll('.feed-card')).filter(isCardShown);
+
+      const idx = navigationPool.findIndex(c => c.dataset.id === currentReaderId);
+      const posEl = document.getElementById('reader-pos');
+      if(posEl) posEl.textContent = idx >= 0 ? `${idx + 1}/${navigationPool.length}` : '';
+      const prevBtn = document.getElementById('reader-prev-btn');
+      const nextBtn = document.getElementById('reader-next-btn');
+      if(prevBtn) prevBtn.disabled = (idx <= 0);
+      if(nextBtn) nextBtn.disabled = (idx < 0 || idx >= navigationPool.length - 1);
+
+      if(idx >= 0){
+        kbIndex = idx;
+        navigationPool.forEach(c => c.classList.remove('kb-focus'));
+        navigationPool[idx].classList.add('kb-focus');
+        navigationPool[idx].scrollIntoView({behavior:'smooth', block:'nearest'});
+      }
+
+      const rCard = document.getElementById('reader-card');
+      if(slideDir !== 0 && rCard){
+        rCard.style.transition = 'none';
+        rCard.style.transform = `translateX(${slideDir * 36}px)`;
+        rCard.style.opacity = '0.45';
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            rCard.style.transition = 'transform .16s ease, opacity .16s ease';
+            rCard.style.transform = 'translateX(0)';
+            rCard.style.opacity = '1';
+          });
+        });
+      }
 
       currentReaderUrl = art.link || '';
-      document.getElementById('reader-meta').textContent = `${art.source || 'News'} • ${relTime(art.published)}${!navigator.onLine ? ' • ⚡ OFFLINE-MODUS' : ''}`;
+      document.getElementById('reader-meta').textContent = `${art.source || 'News'} • ${relTime(art.published)}${!navigator.onLine ? ' • ⚡ OFFLINE-MODUS' : ''}${activeTag ? ' • 🏷️ ' + activeTag : ''}`;
       document.getElementById('reader-title').textContent = art.title || '';
       document.getElementById('reader-orig-link').href = currentReaderUrl;
 
@@ -1083,7 +1210,28 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       const bodyEl = document.getElementById('reader-body');
       bodyEl.innerHTML = imgHtml + summaryBox + (fullHtml || `<p style="color:var(--muted)">Für diesen Artikel ist nur die KI-Zusammenfassung offline hinterlegt. Klicke unten auf „Original-Webseite öffnen“, sobald du wieder Empfang hast.</p>`);
       bodyEl.scrollTop = 0;
+      updateReaderProgress();
       toggleModal('reader-modal', true);
+    }
+
+    function navigateReader(dir){
+      const isCardShown = c => {
+        if(c.style.display === 'none') return false;
+        if(activeTag && !(c.dataset.tags || '').split(';;;').includes(activeTag)) return false;
+        if(onlySaved && !getStorage('bookmarked_news').includes(c.dataset.id)) return false;
+        return true;
+      };
+      const navigationPool = Array.from(document.querySelectorAll('.feed-card')).filter(isCardShown);
+
+      if(!navigationPool.length) return;
+      const idx = navigationPool.findIndex(c => c.dataset.id === String(currentReaderId));
+      const nextIdx = idx + dir;
+      if(nextIdx >= 0 && nextIdx < navigationPool.length){
+        if(navigator.vibrate) navigator.vibrate(12);
+        openReaderModal(navigationPool[nextIdx].dataset.id, dir);
+      } else {
+        showToast(dir > 0 ? '🏁 Ende der Liste erreicht' : '⬆️ Du bist bereits beim ersten Artikel', 1800);
+      }
     }
 
     async function shareCurrentReaderArticle(){
@@ -1184,6 +1332,12 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         const newSeen = mergeList('seen_news', remote.s, 's');
         const newBm   = mergeList('bookmarked_news', remote.b, 'b');
 
+        if(remote.ex) {
+          const localEx = getStorage('excluded_keywords');
+          const mergedEx = Array.from(new Set([...localEx, ...remote.ex]));
+          setStorage('excluded_keywords', mergedEx);
+        }
+
         document.querySelectorAll('.feed-card').forEach(c => {
           const id = c.dataset.id;
           c.classList.toggle('read', newRead.includes(id));
@@ -1192,10 +1346,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         });
         updateBookmarkCount();
         updateUnreadCount();
-        if(onlyUnread || onlySaved) applyFilters();
+        applyFilters();
 
         setSyncUI('☁️ ✓', 'var(--accent)');
-        if(showFeedback) showToast('☁️ Lese-Status synchronisiert!', 2000);
+        if(showFeedback) showToast('☁️ Lese-Status & Filter synchronisiert!', 2000);
       } catch(e){
         setSyncUI('☁️ ⚠️', '#eab308');
       } finally {
@@ -1211,6 +1365,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
           r: getStorage('read_news').slice(-600),
           s: getStorage('seen_news').slice(-600),
           b: getStorage('bookmarked_news').slice(-200),
+          ex: getStorage('excluded_keywords'),
           rem: getRemovedMap(),
           t: Date.now()
         };
@@ -1272,13 +1427,18 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       const rList = getStorage('read_news'), sList = getStorage('seen_news');
       let unreadTotal = 0;
       const unreadBySrc = {};
+      const unreadByTag = {};
 
       document.querySelectorAll('.feed-card').forEach(c => {
         const id = c.dataset.id;
-        if(!rList.includes(id) && !sList.includes(id)){
+        const isUnread = !rList.includes(id) && !sList.includes(id);
+        if(isUnread && c.style.display !== 'none'){
           unreadTotal++;
           (c.dataset.sources || '').split(';;;').forEach(s => {
             if(s) unreadBySrc[s] = (unreadBySrc[s] || 0) + 1;
+          });
+          (c.dataset.tags || '').split(';;;').forEach(tag => {
+            if(tag) unreadByTag[tag] = (unreadByTag[tag] || 0) + 1;
           });
         }
       });
@@ -1288,11 +1448,19 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
       document.querySelectorAll('#source-list .source-btn').forEach(btn => {
         const src = btn.dataset.src;
+        const tag = btn.dataset.tag;
         const bGroup = btn.querySelector('.badge-group');
         if(!bGroup) return;
-        const tot = src === 'all' ? liveArticles.length : (counts[src] || 0);
-        const unr = src === 'all' ? unreadTotal : (unreadBySrc[src] || 0);
-        bGroup.innerHTML = (unr > 0 ? `<span class="badge badge-new">${unr}</span>` : '') + `<span class="badge">${tot}</span>`;
+
+        if(src){
+          const tot = src === 'all' ? liveArticles.length : (counts[src] || 0);
+          const unr = src === 'all' ? unreadTotal : (unreadBySrc[src] || 0);
+          bGroup.innerHTML = (unr > 0 ? `<span class="badge badge-new">${unr}</span>` : '') + `<span class="badge">${tot}</span>`;
+        } else if(tag){
+          const tot = tagCounts[tag] || 0;
+          const unr = unreadByTag[tag] || 0;
+          bGroup.innerHTML = (unr > 0 ? `<span class="badge badge-new">${unr}</span>` : '') + `<span class="badge">${tot}</span>`;
+        }
       });
     }
 
@@ -1412,12 +1580,18 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function renderUI(articles){
-      let totalDups = 0; counts = {};
+      let totalDups = 0; counts = {}; tagCounts = {};
       for(let i = 0; i < articles.length; i++) {
         const a = articles[i];
         const dupCount = (a.merged_details && a.merged_details.length) ? a.merged_details.length : (a.other_sources || []).length;
         totalDups += dupCount;
         counts[a.source||"Unbekannt"] = (counts[a.source||"Unbekannt"]||0) + 1;
+
+        const artTags = getArticleTags(a);
+        a._tagsList = artTags;
+        artTags.forEach(t => {
+          tagCounts[t] = (tagCounts[t] || 0) + 1;
+        });
       }
       const tEl = document.getElementById('current-title');
       const dTime = getDisplayTime(articles);
@@ -1427,11 +1601,27 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       const sortBtn = document.getElementById('sort-unseen-btn');
       if(sortBtn) sortBtn.classList.toggle('active', sortUnseenFirst);
 
-      const sorted = Array.from(new Set([...configuredSources, ...Object.keys(counts)])).sort((a,b)=>(counts[b]||0)-(counts[a]||0));
+      const sortedSources = Array.from(new Set([...configuredSources, ...Object.keys(counts)])).sort((a,b)=>(counts[b]||0)-(counts[a]||0));
+      const activeTagsList = Object.keys(tagCounts).sort((a,b) => tagCounts[b] - tagCounts[a]);
+      const excludedList = getStorage('excluded_keywords');
+
       const sl = document.getElementById('source-list');
       if(sl) {
-        sl.innerHTML = `<li><button class="source-btn ${activeSource==='all'?'active':''}" data-src="all" onclick="filterSource('all',this)"><span>Alle</span><span class="badge-group"><span class="badge">${articles.length}</span></span></button></li>` +
-          sorted.map(s => `<li><button class="source-btn ${activeSource===s?'active':''}" data-src="${escAttr(s)}" onclick="filterSource('${escAttr(s)}',this)"><span>${escAttr(s)}</span><span class="badge-group"><span class="badge">${counts[s]||0}</span></span></button></li>`).join('');
+        let sbHtml = `<li><button class="source-btn ${activeSource==='all'&&!activeTag?'active':''}" data-src="all" onclick="filterSource('all',this)"><span>Alle Feeds</span><span class="badge-group"><span class="badge">${articles.length}</span></span></button></li>` +
+          sortedSources.map(s => `<li><button class="source-btn ${activeSource===s&&!activeTag?'active':''}" data-src="${escAttr(s)}" onclick="filterSource('${escAttr(s)}',this)"><span>${escAttr(s)}</span><span class="badge-group"><span class="badge">${counts[s]||0}</span></span></button></li>`).join('');
+
+        if(activeTagsList.length > 0){
+          sbHtml += `<div class="sidebar-section-title">🏷️ Schlagwörter</div>` +
+            activeTagsList.map(tag => `<li><button class="source-btn ${activeTag===tag?'active':''}" data-tag="${escAttr(tag)}" onclick="filterTag('${escAttr(tag)}',this)"><span>${escAttr(tag)}</span><span class="badge-group"><span class="badge">${tagCounts[tag]}</span></span></button></li>`).join('');
+        }
+
+        sbHtml += `<div class="sidebar-section-title">🚫 Ausblenden (Enthält nicht)</div>` +
+          COMMON_TAGS.map(ex => {
+            const isExActive = excludedList.includes(ex);
+            return `<li><button class="source-btn ${isExActive?'exclude-active':''}" onclick="toggleExcludeKeyword('${escAttr(ex)}')"><span>${isExActive ? '✕ ' : '+ '}${escAttr(ex)}</span></button></li>`;
+          }).join('');
+
+        sl.innerHTML = sbHtml;
       }
 
       const rList = getStorage('read_news'), sList = getStorage('seen_news'), bList = getStorage('bookmarked_news');
@@ -1467,10 +1657,11 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
           const img = a.image ? `<img class="feed-thumb" src="${escAttr(a.image)}" loading="lazy" referrerpolicy="no-referrer" onload="if(this.naturalWidth<80||this.naturalHeight<60)this.remove()" onerror="this.remove()">` : '';
           const cls = (rList.includes(id)?' read':'') + (sList.includes(id)?' seen':'') + (bList.includes(id)?' bookmarked':'');
           const safeTitle = escAttr(a.title||'Ohne Titel'), safeLink = escAttr(a.link||'#'), safeSrcs = escAttr([a.source||'',...(a.other_sources||[])].join(';;;'));
+          const safeTags = escAttr((a._tagsList || []).join(';;;'));
           const hasOff = Boolean(offlineMap[a.link]);
           const exactTimeTooltip = escAttr(formatExactTime(a.published));
 
-          htmlBuf += `<article class="feed-card${cls}" data-id="${id}" data-link="${safeLink}" data-title="${safeTitle}" data-sources="${safeSrcs}">
+          htmlBuf += `<article class="feed-card${cls}" data-id="${id}" data-link="${safeLink}" data-title="${safeTitle}" data-sources="${safeSrcs}" data-tags="${safeTags}">
             <div class="feed-content">
               <div class="feed-meta">
                 <button class="action-icon-btn bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Merken (Taste: b)">🔖</button>
@@ -1489,6 +1680,21 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         updateUnreadCount();
         applyFilters();
       }
+    }
+
+    function toggleExcludeKeyword(kw){
+      let ex = getStorage('excluded_keywords');
+      const idx = ex.indexOf(kw);
+      if(idx >= 0){
+        ex.splice(idx, 1);
+        showToast(`✅ Filter entfernt: Zeige wieder "${kw}"`, 1800);
+      } else {
+        ex.push(kw);
+        showToast(`🚫 Ausgeblendet: Artikel mit "${kw}"`, 1800);
+      }
+      setStorage('excluded_keywords', ex);
+      renderUI(liveArticles);
+      scheduleCloudPush();
     }
 
     function openDupModal(){
@@ -1527,11 +1733,20 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     function filterSource(src, btn){
-      activeSource = src; document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
+      activeSource = src; activeTag = ''; document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
       if(btn) btn.classList.add('active');
       const t = document.getElementById('current-title');
       const dTime = getDisplayTime(liveArticles);
       if(t && !onlySaved) t.textContent = (src==='all')?(window.IS_ARCHIVE?`Archiv: ${liveArticles.length} News bis ${dTime}`:`${liveArticles.length} News bis ${dTime}`):`${src} (${counts[src]||0}) bis ${dTime}`;
+      applyFilters(); if(window.innerWidth<=768) toggleSidebar();
+    }
+
+    function filterTag(tag, btn){
+      activeTag = tag; activeSource = ''; document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
+      if(btn) btn.classList.add('active');
+      const t = document.getElementById('current-title');
+      const dTime = getDisplayTime(liveArticles);
+      if(t && !onlySaved) t.textContent = `🏷️ ${tag} (${tagCounts[tag]||0}) bis ${dTime}`;
       applyFilters(); if(window.innerWidth<=768) toggleSidebar();
     }
 
@@ -1556,15 +1771,26 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
     function applyFilters(){
       const bList = getStorage('bookmarked_news'), rList = getStorage('read_news'), sList = getStorage('seen_news');
+      const excludedList = getStorage('excluded_keywords').map(x => x.toLowerCase());
       kbIndex = -1;
+
       document.querySelectorAll('.feed-card').forEach(c => {
         c.classList.remove('kb-focus');
         const id = c.dataset.id;
+        const textContent = c.textContent.toLowerCase();
         const hasGreenDot = !rList.includes(id) && !sList.includes(id);
+        const matchesSource = activeSource === '' || activeSource === 'all' || (c.dataset.sources||'').split(';;;').includes(activeSource);
+        const matchesTag = !activeTag || (c.dataset.tags || '').split(';;;').includes(activeTag);
+        
+        let isExcluded = false;
+        for(let i = 0; i < excludedList.length; i++){
+          if(textContent.includes(excludedList[i])){ isExcluded = true; break; }
+        }
+
         const show = (!onlySaved || bList.includes(id)) &&
                      (!onlyUnread || hasGreenDot) &&
-                     (activeSource==='all' || (c.dataset.sources||'').split(';;;').includes(activeSource)) &&
-                     (!searchQuery || c.textContent.toLowerCase().includes(searchQuery));
+                     matchesSource && matchesTag && !isExcluded &&
+                     (!searchQuery || textContent.includes(searchQuery));
         c.style.display = show ? '' : 'none';
 
         if(show){
@@ -1575,7 +1801,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         }
       });
       const div = document.getElementById('seen-divider');
-      if(div) div.style.display = (onlyUnread || onlySaved || searchQuery || activeSource !== 'all') ? 'none' : '';
+      if(div) div.style.display = (onlyUnread || onlySaved || searchQuery || activeSource !== 'all' || activeTag || getStorage('excluded_keywords').length > 0) ? 'none' : '';
       updateUnreadCount();
     }
 
@@ -1679,6 +1905,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
     async function init(){
       initTheme();
+      applyReaderFont();
       loadLocalOfflineCache();
       updateOnlineStatusUI();
       if(window.innerWidth>768 && localStorage.getItem('sidebar_closed')==='true') document.getElementById('sidebar').classList.add('collapsed');
@@ -1731,7 +1958,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         else if(touchTargetCard && Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 120){
           touchTargetCard.style.transform = `translateX(${diffX * 0.35}px)`;
           const ready = Math.abs(diffX) > 60 && Math.abs(diffX) > Math.abs(diffY) * 1.4;
-          touchTargetCard.classList.toggle('swipe-sh', ready && diffX > 0);
+          touchTargetCard.classList.toggle('swipe-rd', ready && diffX > 0);
           touchTargetCard.classList.toggle('swipe-bm', ready && diffX < 0);
         }
       }, {passive:false});
@@ -1770,14 +1997,33 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
         if(touchTargetCard){
           touchTargetCard.style.transform = '';
-          touchTargetCard.classList.remove('swipe-sh', 'swipe-bm');
+          touchTargetCard.classList.remove('swipe-rd', 'swipe-bm');
           if(Math.abs(diffX) > 60 && Math.abs(diffX) > Math.abs(diffY) * 1.4){
-            if(diffX > 0) shareArticle(touchTargetCard.dataset.title, touchTargetCard.dataset.link);
+            if(diffX > 0) openReaderModal(touchTargetCard.dataset.id);
             else toggleBookmark(touchTargetCard.dataset.id);
           }
           touchTargetCard = null;
         }
       }, {passive:true});
+
+      // --- Wischgeste (Links/Rechts) direkt im geöffneten Lesemodus zum Blättern ---
+      const readerCard = document.getElementById('reader-card');
+      let rTouchStartX = 0, rTouchStartY = 0;
+      if(readerCard){
+        readerCard.addEventListener('touchstart', e => {
+          rTouchStartX = e.touches[0].screenX;
+          rTouchStartY = e.touches[0].screenY;
+        }, {passive:true});
+
+        readerCard.addEventListener('touchend', e => {
+          const dx = e.changedTouches[0].screenX - rTouchStartX;
+          const dy = e.changedTouches[0].screenY - rTouchStartY;
+          if(Math.abs(dx) > 65 && Math.abs(dx) > Math.abs(dy) * 1.5){
+            if(dx < 0) navigateReader(1);   // Nach links wischen -> Nächster Artikel
+            else navigateReader(-1);        // Nach rechts wischen -> Vorheriger Artikel
+          }
+        }, {passive:true});
+      }
 
       try {
         const r = await fetch('data.json?t=' + Date.now(), {cache:'no-store'}).catch(() => fetch('data.json'));
@@ -1834,6 +2080,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
           setTimeout(() => preloadOfflineArchive(false), 1200);
         }
 
+        // --- Observer: 100% Sichtbarkeit und 2 Sekunden Verweildauer ---
         const timers = new Map(), obs = new IntersectionObserver(ents => {
           ents.forEach(e => {
             const id = e.target.dataset.id;
@@ -1850,13 +2097,14 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
                 }
                 e.target.classList.add('seen');
                 obs.unobserve(e.target);
-              }, 1000));
+              }, 2000));
             } else if(timers.has(id)){
               clearTimeout(timers.get(id));
               timers.delete(id);
             }
           });
-        }, {root: document.querySelector('.main'), threshold: 0.6});
+        }, {root: document.querySelector('.main'), threshold: 1.0});
+
         document.querySelectorAll('.feed-card:not(.seen)').forEach(c => obs.observe(c));
 
         let lastY = 0; const mEl = document.querySelector('.main'), hEl = document.querySelector('.stream-header');
@@ -1907,6 +2155,18 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         }
         return;
       }
+
+      const readerOpen = document.getElementById('reader-modal').style.display === 'flex';
+      if(readerOpen){
+        if(e.key==='ArrowRight' || e.key==='j'){ e.preventDefault(); navigateReader(1); return; }
+        if(e.key==='ArrowLeft' || e.key==='k'){ e.preventDefault(); navigateReader(-1); return; }
+        if(e.key==='+' || e.key==='='){ e.preventDefault(); changeReaderFontSize(1); return; }
+        if(e.key==='-'){ e.preventDefault(); changeReaderFontSize(-1); return; }
+        if(e.key==='b' && currentReaderId){ toggleBookmark(currentReaderId); return; }
+        if(e.key==='o' && currentReaderUrl){ window.open(currentReaderUrl, '_blank'); return; }
+        if(e.key==='v' || e.key==='Escape'){ e.preventDefault(); toggleModal('reader-modal',false); return; }
+      }
+
       if(e.key==='[') toggleSidebar();
       if(e.key==='r') triggerWorkflow();
       if(e.key==='u') toggleUnreadFilter();
@@ -1942,7 +2202,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v28';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v36';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
