@@ -669,13 +669,17 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     .modal-card.reader-modal{max-width:720px;max-height:88vh;padding:22px;transition:transform .16s ease, opacity .16s ease;touch-action:pan-y;position:relative;overflow:hidden}
     .reader-progress{position:absolute;top:0;left:0;height:3px;background:var(--accent);width:0%;transition:width .08s linear;z-index:10}
     .modal-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:12px;gap:12px}
+    .reader-header{display:flex;flex-direction:column;gap:8px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:12px}
+    .reader-top-bar{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%}
+    .reader-controls{display:flex;gap:4px;align-items:center;flex-shrink:0}
+    .reader-title-text{font-size:1.15rem;line-height:1.35;color:var(--bold);width:100%;hyphens:auto;-webkit-hyphens:auto;overflow-wrap:break-word}
     .modal-body{overflow-y:auto;flex-grow:1;font-size:.9rem}
-    .reader-content{font-size:var(--reader-font-size, .98rem);line-height:1.68;color:var(--text);padding-right:4px;transition:font-size .12s ease}
+    .reader-content{font-size:var(--reader-font-size, .98rem);line-height:1.68;color:var(--text);padding-right:4px;transition:font-size .12s ease;hyphens:auto;-webkit-hyphens:auto}
     .reader-content p{margin-bottom:14px}
-    .reader-content h3{color:var(--bold);font-size:calc(var(--reader-font-size, .98rem) * 1.14);margin:18px 0 8px}
+    .reader-content h3{color:var(--bold);font-size:calc(var(--reader-font-size, .98rem) * 1.14);line-height:1.35;margin:18px 0 8px;hyphens:auto;-webkit-hyphens:auto}
     .reader-content blockquote{border-left:3px solid var(--accent);padding-left:12px;color:var(--muted);margin:12px 0;font-style:italic}
     .reader-thumb{width:100%;max-height:280px;object-fit:cover;border-radius:8px;margin-bottom:16px}
-    .reader-nav-pos{font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums;min-width:36px;text-align:center}
+    .reader-nav-pos{font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums;min-width:34px;text-align:center}
     .modal-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:12px}
     .btn, .btn-open-all{
       background:var(--card);border:1px solid var(--border);border-radius:6px;color:var(--text);
@@ -811,7 +815,9 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       .btn-open-all{font-size:.75rem}
       .cards-grid{grid-template-columns:1fr;gap:8px;padding:8px 8px calc(24px + env(safe-area-inset-bottom,0px))}
       .feed-card{padding:14px}
-      .modal-card.reader-modal{padding:16px;max-height:92vh}
+      .modal-card.reader-modal{padding:14px 16px;max-height:92vh}
+      .reader-controls .btn{padding:4px 7px;height:30px;font-size:.8rem}
+      .reader-title-text{font-size:1.05rem;line-height:1.35}
       .toast-container{left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));max-width:none}
     }
   </style>
@@ -828,20 +834,20 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   <div id="reader-modal" class="modal-overlay" onclick="if(event.target===this)toggleModal('reader-modal',false)">
     <div class="modal-card reader-modal" id="reader-card">
       <div id="reader-progress" class="reader-progress"></div>
-      <div class="modal-header">
-        <div style="flex:1;min-width:0">
-          <div id="reader-meta" style="font-size:.78rem;color:var(--accent);font-weight:600;margin-bottom:4px"></div>
-          <h2 id="reader-title" style="font-size:1.15rem;line-height:1.35;color:var(--bold)"></h2>
+      <div class="reader-header">
+        <div class="reader-top-bar">
+          <div id="reader-meta" style="font-size:.78rem;color:var(--accent);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+          <div class="reader-controls">
+            <button class="btn" id="reader-prev-btn" onclick="navigateReader(-1)" title="Vorheriger Artikel (Pfeil links / Nach rechts wischen)">‹</button>
+            <span id="reader-pos" class="reader-nav-pos"></span>
+            <button class="btn" id="reader-next-btn" onclick="navigateReader(1)" title="Nächster Artikel (Pfeil rechts / Nach links wischen)">›</button>
+            <button class="btn" id="reader-bm-btn" onclick="toggleCurrentReaderBookmark()" title="Lesezeichen setzen/entfernen (Taste: b)">🔖</button>
+            <button class="btn" id="reader-font-btn" onclick="cycleReaderFontSize()" title="Schriftgröße anpassen (Taste: + / -)" style="font-weight:700">Aa</button>
+            <button class="btn" onclick="shareCurrentReaderArticle()" title="Artikel teilen">📤</button>
+            <button class="btn" onclick="toggleModal('reader-modal',false)">&times;</button>
+          </div>
         </div>
-        <div style="display:flex;gap:5px;align-items:center;flex-shrink:0">
-          <button class="btn" id="reader-prev-btn" onclick="navigateReader(-1)" title="Vorheriger Artikel (Pfeil links / Nach rechts wischen)">‹</button>
-          <span id="reader-pos" class="reader-nav-pos"></span>
-          <button class="btn" id="reader-next-btn" onclick="navigateReader(1)" title="Nächster Artikel (Pfeil rechts / Nach links wischen)">›</button>
-          <button class="btn" id="reader-bm-btn" onclick="toggleCurrentReaderBookmark()" title="Lesezeichen setzen/entfernen (Taste: b)">🔖</button>
-          <button class="btn" id="reader-font-btn" onclick="cycleReaderFontSize()" title="Schriftgröße anpassen (Taste: + / -)" style="font-size:.82rem;font-weight:700">Aa</button>
-          <button class="btn" onclick="shareCurrentReaderArticle()" title="Artikel teilen">📤</button>
-          <button class="btn" onclick="toggleModal('reader-modal',false)">&times;</button>
-        </div>
+        <h2 id="reader-title" class="reader-title-text"></h2>
       </div>
       <div id="reader-body" class="modal-body reader-content" onscroll="updateReaderProgress()"></div>
       <div style="display:flex;gap:10px;margin-top:14px;padding-top:10px;border-top:1px solid var(--border)">
@@ -1198,7 +1204,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
           if(manualTrigger && 'caches' in window){
             const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 80);
-            caches.open('news-hub-v38').then(cache => {
+            caches.open('news-hub-v39').then(cache => {
               imgUrls.forEach(u => fetch(u, {mode: 'no-cors'}).then(res => cache.put(u, res)).catch(()=>{}));
             });
             showToast(`✅ ${cnt} Artikel + Bilder komprimiert für Offline-Modus gespeichert!`, 3500);
@@ -1283,7 +1289,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       }
 
       currentReaderUrl = art.link || '';
-      document.getElementById('reader-meta').textContent = `${art.source || 'News'} • ${relTime(art.published)}${!navigator.onLine ? ' • ⚡ OFFLINE-MODUS' : ''}${activeTag ? ' • 🏷️ ' + activeTag : ''}`;
+      document.getElementById('reader-meta').textContent = `${art.source || 'News'} • ${relTime(art.published)}${!navigator.onLine ? ' • ⚡ OFFLINE' : ''}${activeTag ? ' • 🏷️ ' + activeTag : ''}`;
       document.getElementById('reader-title').textContent = art.title || '';
       document.getElementById('reader-orig-link').href = currentReaderUrl;
 
@@ -2291,7 +2297,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v38';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v39';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
