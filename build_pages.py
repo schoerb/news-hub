@@ -67,7 +67,10 @@ session.headers.update({
 def clean_text(s: str) -> str:
     if not s:
         return ""
-    return " ".join(html.unescape(html.unescape(re.sub(r"<[^>]+>", " ", s))).split()).strip()
+    # Entferne HTML-Tags, dekodiere Entities und ersetze geschützte Leerzeichen (&nbsp; / \u00a0) sowie Trenn-Steuerzeichen
+    unescaped = html.unescape(html.unescape(re.sub(r"<[^>]+>", " ", s)))
+    normalized = unescaped.replace("\u00a0", " ").replace("\u202f", " ").replace("\u200b", "").replace("\xad", "")
+    return " ".join(normalized.split()).strip()
 
 
 def clean_url(url: str) -> str:
@@ -189,6 +192,8 @@ def html_to_reader_blocks(raw_html: str) -> str:
         tag = m.group(1).lower()
         txt = clean_text(m.group(2))
         if not txt:
+            continue
+        if tag in ("h2", "h3") and len(txt) < 12:
             continue
         if tag == "p" and len(txt) < 45:
             continue
@@ -666,17 +671,16 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     
     .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);backdrop-filter:blur(3px);z-index:1100;align-items:center;justify-content:center;padding:16px}
     .modal-card{background:var(--sidebar);border:1px solid var(--border);border-radius:12px;padding:24px;width:100%;max-width:540px;max-height:82vh;display:flex;flex-direction:column;box-shadow:0 16px 36px rgba(0,0,0,.35)}
-    .modal-card.reader-modal{max-width:720px;max-height:88vh;padding:22px;transition:transform .16s ease, opacity .16s ease;touch-action:pan-y;position:relative;overflow:hidden}
+    .modal-card.reader-modal{max-width:720px;max-height:88vh;padding:20px;transition:transform .16s ease, opacity .16s ease;touch-action:pan-y;position:relative;overflow:hidden}
     .reader-progress{position:absolute;top:0;left:0;height:3px;background:var(--accent);width:0%;transition:width .08s linear;z-index:10}
     .modal-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:12px;gap:12px}
-    .reader-header{display:flex;flex-direction:column;gap:8px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:12px}
-    .reader-top-bar{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%}
-    .reader-controls{display:flex;gap:4px;align-items:center;flex-shrink:0}
-    .reader-title-text{font-size:1.15rem;line-height:1.35;color:var(--bold);width:100%;hyphens:auto;-webkit-hyphens:auto;overflow-wrap:break-word}
+    .reader-toolbar{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;padding-bottom:10px;margin-bottom:12px;border-bottom:1px solid var(--border);flex-shrink:0}
+    .reader-controls{display:flex;gap:5px;align-items:center;flex-shrink:0;margin-left:auto}
+    .reader-article-title{display:block;width:100%;max-width:100%;font-size:calc(var(--reader-font-size, .98rem) * 1.24);font-weight:700;line-height:1.38;color:var(--bold);margin:0 0 14px 0;white-space:normal;word-break:normal;overflow-wrap:break-word;hyphens:none;-webkit-hyphens:none}
     .modal-body{overflow-y:auto;flex-grow:1;font-size:.9rem}
-    .reader-content{font-size:var(--reader-font-size, .98rem);line-height:1.68;color:var(--text);padding-right:4px;transition:font-size .12s ease;hyphens:auto;-webkit-hyphens:auto}
+    .reader-content{font-size:var(--reader-font-size, .98rem);line-height:1.68;color:var(--text);padding-right:4px;transition:font-size .12s ease}
     .reader-content p{margin-bottom:14px}
-    .reader-content h3{color:var(--bold);font-size:calc(var(--reader-font-size, .98rem) * 1.14);line-height:1.35;margin:18px 0 8px;hyphens:auto;-webkit-hyphens:auto}
+    .reader-content h3{display:block;width:100%;color:var(--bold);font-size:calc(var(--reader-font-size, .98rem) * 1.12);line-height:1.38;margin:18px 0 8px;white-space:normal;word-break:normal;overflow-wrap:break-word;hyphens:none;-webkit-hyphens:none}
     .reader-content blockquote{border-left:3px solid var(--accent);padding-left:12px;color:var(--muted);margin:12px 0;font-style:italic}
     .reader-thumb{width:100%;max-height:280px;object-fit:cover;border-radius:8px;margin-bottom:16px}
     .reader-nav-pos{font-size:.75rem;color:var(--muted);font-variant-numeric:tabular-nums;min-width:34px;text-align:center}
@@ -815,9 +819,9 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       .btn-open-all{font-size:.75rem}
       .cards-grid{grid-template-columns:1fr;gap:8px;padding:8px 8px calc(24px + env(safe-area-inset-bottom,0px))}
       .feed-card{padding:14px}
-      .modal-card.reader-modal{padding:14px 16px;max-height:92vh}
-      .reader-controls .btn{padding:4px 7px;height:30px;font-size:.8rem}
-      .reader-title-text{font-size:1.05rem;line-height:1.35}
+      .modal-overlay{padding:8px}
+      .modal-card.reader-modal{padding:14px;max-height:94vh}
+      .reader-controls .btn{padding:4px 8px;height:30px;font-size:.82rem}
       .toast-container{left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom,0px));max-width:none}
     }
   </style>
@@ -834,23 +838,20 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
   <div id="reader-modal" class="modal-overlay" onclick="if(event.target===this)toggleModal('reader-modal',false)">
     <div class="modal-card reader-modal" id="reader-card">
       <div id="reader-progress" class="reader-progress"></div>
-      <div class="reader-header">
-        <div class="reader-top-bar">
-          <div id="reader-meta" style="font-size:.78rem;color:var(--accent);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
-          <div class="reader-controls">
-            <button class="btn" id="reader-prev-btn" onclick="navigateReader(-1)" title="Vorheriger Artikel (Pfeil links / Nach rechts wischen)">‹</button>
-            <span id="reader-pos" class="reader-nav-pos"></span>
-            <button class="btn" id="reader-next-btn" onclick="navigateReader(1)" title="Nächster Artikel (Pfeil rechts / Nach links wischen)">›</button>
-            <button class="btn" id="reader-bm-btn" onclick="toggleCurrentReaderBookmark()" title="Lesezeichen setzen/entfernen (Taste: b)">🔖</button>
-            <button class="btn" id="reader-font-btn" onclick="cycleReaderFontSize()" title="Schriftgröße anpassen (Taste: + / -)" style="font-weight:700">Aa</button>
-            <button class="btn" onclick="shareCurrentReaderArticle()" title="Artikel teilen">📤</button>
-            <button class="btn" onclick="toggleModal('reader-modal',false)">&times;</button>
-          </div>
+      <div class="reader-toolbar">
+        <div id="reader-meta" style="font-size:.78rem;color:var(--accent);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+        <div class="reader-controls">
+          <button class="btn" id="reader-prev-btn" onclick="navigateReader(-1)" title="Vorheriger Artikel (Pfeil links / Nach rechts wischen)">‹</button>
+          <span id="reader-pos" class="reader-nav-pos"></span>
+          <button class="btn" id="reader-next-btn" onclick="navigateReader(1)" title="Nächster Artikel (Pfeil rechts / Nach links wischen)">›</button>
+          <button class="btn" id="reader-bm-btn" onclick="toggleCurrentReaderBookmark()" title="Lesezeichen setzen/entfernen (Taste: b)">🔖</button>
+          <button class="btn" id="reader-font-btn" onclick="cycleReaderFontSize()" title="Schriftgröße anpassen (Taste: + / -)" style="font-weight:700">Aa</button>
+          <button class="btn" onclick="shareCurrentReaderArticle()" title="Artikel teilen">📤</button>
+          <button class="btn" onclick="toggleModal('reader-modal',false)">&times;</button>
         </div>
-        <h2 id="reader-title" class="reader-title-text"></h2>
       </div>
       <div id="reader-body" class="modal-body reader-content" onscroll="updateReaderProgress()"></div>
-      <div style="display:flex;gap:10px;margin-top:14px;padding-top:10px;border-top:1px solid var(--border)">
+      <div style="display:flex;gap:10px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border);flex-shrink:0">
         <a id="reader-orig-link" href="#" target="_blank" rel="noopener" class="btn-action" style="margin-top:0;text-align:center;text-decoration:none;flex:1">Original-Webseite öffnen ↗</a>
         <button class="btn" style="padding:10px 16px" onclick="toggleModal('reader-modal',false)">Schließen</button>
       </div>
@@ -930,7 +931,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     const SYNC_VAR_URL = "https://api.github.com/repos/schoerb/news-hub/actions/variables/NEWSHUB_SYNC";
     const SYNC_VARS_CREATE_URL = "https://api.github.com/repos/schoerb/news-hub/actions/variables";
     let rawData = "", globalArticles = [], liveArticles = [], offlineMap = {}, counts = {}, tagCounts = {}, activeSource = 'all', activeTag = '', searchQuery = localStorage.getItem('hub_search_q') || '', searchExcludeMode = localStorage.getItem('hub_search_ex') === 'true', onlySaved = false, onlyUnread = false, sortUnseenFirst = localStorage.getItem('sort_unseen') === 'true', kbIndex = -1, sTimer = null, toastTimer = null, pollInterval = null, syncPushTimer = null, isSyncing = false, lastFetchTs = Date.now();
-    let currentReaderId = '', currentReaderUrl = '';
+    let currentReaderId = '', currentReaderUrl = '', currentReaderTitle = '';
 
     const TAG_KEYWORDS = {
       'Linux': ['linux', 'ubuntu', 'debian', 'kernel', 'arch', 'fedora'],
@@ -954,6 +955,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         }
       }
       return tags;
+    }
+
+    function normalizeSpaces(s){
+      return (s || '').replace(/[\u00A0\u202F\u2007\u2060\uAD]/g, ' ').replace(/\s+/g, ' ').trim();
     }
 
     // --- Kombinierter +/- Mehrfach-Filter-Parser ---
@@ -1204,7 +1209,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
           if(manualTrigger && 'caches' in window){
             const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 80);
-            caches.open('news-hub-v39').then(cache => {
+            caches.open('news-hub-v40').then(cache => {
               imgUrls.forEach(u => fetch(u, {mode: 'no-cors'}).then(res => cache.put(u, res)).catch(()=>{}));
             });
             showToast(`✅ ${cnt} Artikel + Bilder komprimiert für Offline-Modus gespeichert!`, 3500);
@@ -1289,16 +1294,17 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       }
 
       currentReaderUrl = art.link || '';
-      document.getElementById('reader-meta').textContent = `${art.source || 'News'} • ${relTime(art.published)}${!navigator.onLine ? ' • ⚡ OFFLINE' : ''}${activeTag ? ' • 🏷️ ' + activeTag : ''}`;
-      document.getElementById('reader-title').textContent = art.title || '';
+      currentReaderTitle = normalizeSpaces(art.title || '');
+      document.getElementById('reader-meta').textContent = `${art.source || 'News'} • ${relTime(art.published)}${!navigator.onLine ? ' • ⚡ OFFLINE' : ''}`;
       document.getElementById('reader-orig-link').href = currentReaderUrl;
 
-      const fullHtml = offlineMap[art.link] || '';
+      const fullHtml = normalizeSpaces(offlineMap[art.link] || '');
+      const titleHtml = `<h2 class="reader-article-title">${escAttr(currentReaderTitle)}</h2>`;
       const imgHtml = art.image ? `<img class="reader-thumb" src="${escAttr(art.image)}" referrerpolicy="no-referrer" onerror="this.remove()">` : '';
-      const summaryBox = `<div style="padding:12px;background:var(--card);border-left:3px solid var(--accent);border-radius:6px;margin-bottom:16px;font-weight:500">${art.summary || ''}</div>`;
+      const summaryBox = `<div style="padding:12px;background:var(--card);border-left:3px solid var(--accent);border-radius:6px;margin-bottom:16px;font-weight:500">${normalizeSpaces(art.summary || '')}</div>`;
 
       const bodyEl = document.getElementById('reader-body');
-      bodyEl.innerHTML = imgHtml + summaryBox + (fullHtml || `<p style="color:var(--muted)">Für diesen Artikel ist nur die KI-Zusammenfassung offline hinterlegt. Klicke unten auf „Original-Webseite öffnen“, sobald du wieder Empfang hast.</p>`);
+      bodyEl.innerHTML = titleHtml + imgHtml + summaryBox + (fullHtml || `<p style="color:var(--muted)">Für diesen Artikel ist nur die KI-Zusammenfassung offline hinterlegt. Klicke unten auf „Original-Webseite öffnen“, sobald du wieder Empfang hast.</p>`);
       bodyEl.scrollTop = 0;
       updateReaderProgress();
       toggleModal('reader-modal', true);
@@ -1325,8 +1331,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     async function shareCurrentReaderArticle(){
-      const title = document.getElementById('reader-title').textContent;
-      if(currentReaderUrl) await shareArticle(title, currentReaderUrl);
+      if(currentReaderUrl) await shareArticle(currentReaderTitle, currentReaderUrl);
     }
 
     function handleArticleClick(e, id, url){
@@ -1755,7 +1760,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
           const img = a.image ? `<img class="feed-thumb" src="${escAttr(a.image)}" loading="lazy" referrerpolicy="no-referrer" onload="if(this.naturalWidth<80||this.naturalHeight<60)this.remove()" onerror="this.remove()">` : '';
           const cls = (rList.includes(id)?' read':'') + (sList.includes(id)?' seen':'') + (bList.includes(id)?' bookmarked':'');
-          const safeTitle = escAttr(a.title||'Ohne Titel'), safeLink = escAttr(a.link||'#'), safeSrcs = escAttr([a.source||'',...(a.other_sources||[])].join(';;;'));
+          const safeTitle = escAttr(normalizeSpaces(a.title||'Ohne Titel')), safeLink = escAttr(a.link||'#'), safeSrcs = escAttr([a.source||'',...(a.other_sources||[])].join(';;;'));
           const safeTags = escAttr((a._tagsList || []).join(';;;'));
           const hasOff = Boolean(offlineMap[a.link]);
           const exactTimeTooltip = escAttr(formatExactTime(a.published));
@@ -1771,7 +1776,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
                 ${oth}
               </div>
               <a class="feed-title" href="${safeLink}" target="_blank" rel="noopener" onclick="return handleArticleClick(event, '${id}', '${safeLink}')">${safeTitle}</a>
-              <p class="feed-summary" data-raw="${escAttr(a.summary||'')}">${a.summary||''}</p>
+              <p class="feed-summary" data-raw="${escAttr(normalizeSpaces(a.summary||''))}">${normalizeSpaces(a.summary||'')}</p>
             </div>${img}
           </article>`;
         }
@@ -2297,7 +2302,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v39';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v40';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
