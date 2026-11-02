@@ -67,9 +67,8 @@ session.headers.update({
 def clean_text(s: str) -> str:
     if not s:
         return ""
-    # Entferne HTML-Tags, dekodiere Entities und ersetze geschützte Leerzeichen (&nbsp; / \u00a0) sowie Trenn-Steuerzeichen
     unescaped = html.unescape(html.unescape(re.sub(r"<[^>]+>", " ", s)))
-    normalized = unescaped.replace("\u00a0", " ").replace("\u202f", " ").replace("\u200b", "").replace("\xad", "")
+    normalized = unescaped.replace("\u00a0", " ").replace("\u202f", " ").replace("\u200b", "").replace("\u00ad", "")
     return " ".join(normalized.split()).strip()
 
 
@@ -757,7 +756,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     .feed-card.kb-focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-dim)}
     .feed-card.swipe-bm{border-color:#eab308;box-shadow:0 0 12px rgba(234,179,8,.25)}
     .feed-card.swipe-rd{border-color:var(--accent);box-shadow:0 0 12px var(--accent-dim)}
-    .unread-dot-btn{background:none;border:none;padding:4px;margin:-4px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%}
+    .unread-dot-btn{background:none;border:none;padding:4px;margin:-4px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;flex-shrink:0}
     .unread-dot-btn:hover{background:var(--hover)}
     .unread-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);transition:all .2s}
     .feed-card.seen .unread-dot{background:var(--muted);box-shadow:none;opacity:.55}
@@ -766,25 +765,21 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     .action-icon-btn{
       background:none;border:1px solid transparent;padding:3px 6px;border-radius:6px;
       cursor:pointer;font-size:.95rem;opacity:.55;transition:all .15s;
-      display:inline-flex;align-items:center;justify-content:center;min-width:28px;min-height:26px;
+      display:inline-flex;align-items:center;justify-content:center;min-width:28px;min-height:26px;flex-shrink:0;
     }
     .action-icon-btn:hover{opacity:1;background:var(--hover);border-color:var(--border);transform:scale(1.08)}
     .action-icon-btn.has-offline{opacity:.9;color:var(--accent)}
     .feed-card.bookmarked .bookmark-btn{opacity:1;filter:drop-shadow(0 0 4px rgba(234,179,8,.6))}
-    .feed-meta{display:flex;align-items:center;gap:6px;font-size:.76rem;margin-bottom:8px;flex-wrap:wrap}
+    .feed-meta{display:flex;align-items:center;gap:6px;font-size:.76rem;margin-bottom:8px;flex-wrap:wrap;min-height:26px}
     .feed-source{
       color:var(--accent);font-weight:600;background:none;border:none;padding:2px 6px;margin:-2px -4px;
-      border-radius:5px;cursor:pointer;font-family:inherit;font-size:inherit;transition:all .15s;
-      display:inline-flex;align-items:center;
+      border-radius:5px;cursor:pointer;font-family:inherit;font-size:inherit;transition:background .15s, color .15s;
+      display:inline-flex;align-items:center;white-space:nowrap;flex-shrink:0;
     }
-    .feed-source:hover{background:var(--accent-dim);color:var(--bold)}
-    @media (hover:hover){
-      .feed-source:hover .src-label{display:none}
-      .feed-source:hover::after{content:"📤 Teilen";color:var(--accent);font-weight:600}
-    }
+    .feed-source:hover{background:var(--accent-dim);color:var(--bold);text-decoration:underline}
     .feed-time{
       color:var(--muted);font-size:.73rem;background:none;border:none;padding:2px 5px;margin:-2px -3px;
-      border-radius:5px;cursor:pointer;font-family:inherit;transition:all .15s;
+      border-radius:5px;cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap;flex-shrink:0;
     }
     .feed-time:hover{color:var(--text);background:var(--hover);text-decoration:underline}
     .feed-others{color:var(--muted);font-size:.72rem}
@@ -957,8 +952,9 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       return tags;
     }
 
+    // Korrekte 4-stellige Hex-Escapes (\u00AD statt \uAD!), damit keine 'u', 'A', 'D' verschluckt werden
     function normalizeSpaces(s){
-      return (s || '').replace(/[\u00A0\u202F\u2007\u2060\uAD]/g, ' ').replace(/\s+/g, ' ').trim();
+      return (s || '').replace(/[\u00A0\u202F\u2007\u2060]/g, ' ').replace(/\u00AD/g, '').replace(/\s+/g, ' ').trim();
     }
 
     // --- Kombinierter +/- Mehrfach-Filter-Parser ---
@@ -1209,7 +1205,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
           if(manualTrigger && 'caches' in window){
             const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 80);
-            caches.open('news-hub-v40').then(cache => {
+            caches.open('news-hub-v41').then(cache => {
               imgUrls.forEach(u => fetch(u, {mode: 'no-cors'}).then(res => cache.put(u, res)).catch(()=>{}));
             });
             showToast(`✅ ${cnt} Artikel + Bilder komprimiert für Offline-Modus gespeichert!`, 3500);
@@ -1769,7 +1765,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
             <div class="feed-content">
               <div class="feed-meta">
                 <button class="action-icon-btn bookmark-btn" onclick="event.stopPropagation();toggleBookmark('${id}')" title="Merken (Taste: b)">🔖</button>
-                <button class="feed-source" onclick="event.stopPropagation();shareCard(this)" title="Link teilen / kopieren"><span class="src-label">${escAttr(a.source||'Quelle')}</span></button>
+                <button class="feed-source" onclick="event.stopPropagation();shareCard(this)" title="Link teilen / kopieren">${escAttr(a.source||'Quelle')}</button>
                 <button class="unread-dot-btn" onclick="event.stopPropagation();toggleRead('${id}')" title="Status umschalten (Taste: m)"><span class="unread-dot"></span></button>
                 <button class="feed-time" onclick="event.stopPropagation();handleTimeClick('${id}')" title="${exactTimeTooltip ? exactTimeTooltip + ' – ' : ''}Klicken: Ab hier abwärts als gelesen markieren">${relTime(a.published)}</button>
                 <button class="action-icon-btn reader-btn ${hasOff?'has-offline':''}" onclick="event.stopPropagation();openReaderModal('${id}')" title="Offline-Lesemodus öffnen (Taste: v)">📖</button>
@@ -2302,7 +2298,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v40';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v41';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
