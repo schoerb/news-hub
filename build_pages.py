@@ -68,7 +68,7 @@ def clean_text(s: str) -> str:
     if not s:
         return ""
     unescaped = html.unescape(html.unescape(re.sub(r"<[^>]+>", " ", s)))
-    normalized = unescaped.replace("\u00a0", " ").replace("\u202f", " ").replace("\u200b", "").replace("\u00ad", "")
+    normalized = unescaped.replace("\u00a0", " ").replace("\u202f", " ").replace("\u200b", "").replace("", "")
     return " ".join(normalized.split()).strip()
 
 
@@ -952,10 +952,8 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       return tags;
     }
 
-    // Korrekte 4-stellige Hex-Escapes (\u00AD statt \uAD!), damit keine 'u', 'A', 'D' verschluckt werden
-    function normalizeSpaces(s){
-      return (s || '').replace(/[\u00A0\u202F\u2007\u2060]/g, ' ').replace(/\u00AD/g, '').replace(/\s+/g, ' ').trim();
-    }
+    // Korrekte 4-stellige Hex-Escapes (\u00AD statt !), damit keine 'u', 'A', 'D' verschluckt werden
+    function normalizeSpaces(s){ return (s || ""); }
 
     // --- Kombinierter +/- Mehrfach-Filter-Parser ---
     function parseSearchRules(rawQuery, defaultExclude){
@@ -1173,7 +1171,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     function loadLocalOfflineCache(){
       if(!navigator.onLine){ updateOnlineStatusUI(); return; }
       try {
-        offlineMap = JSON.parse(localStorage.getItem('offline_articles_48h') || '{}');
+        offlineMap = JSON.parse(localStorage.getItem('offline_articles_48h_v44') || '{}');
         const cnt = Object.keys(offlineMap).length;
         const el = document.getElementById('offline-status');
         if(el && cnt > 0){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
@@ -1194,7 +1192,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
         if(parsedOff){
           offlineMap = parsedOff;
-          try { localStorage.setItem('offline_articles_48h', JSON.stringify(offlineMap)); } catch(e){}
+          try { localStorage.setItem('offline_articles_48h_v44', JSON.stringify(offlineMap)); } catch(e){}
           const cnt = Object.keys(offlineMap).length;
           if(el){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
 
@@ -1205,7 +1203,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
           if(manualTrigger && 'caches' in window){
             const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 80);
-            caches.open('news-hub-v41').then(cache => {
+            caches.open('news-hub-v44').then(cache => {
               imgUrls.forEach(u => fetch(u, {mode: 'no-cors'}).then(res => cache.put(u, res)).catch(()=>{}));
             });
             showToast(`✅ ${cnt} Artikel + Bilder komprimiert für Offline-Modus gespeichert!`, 3500);
@@ -2298,17 +2296,18 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v41';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v44';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
 self.addEventListener('fetch', e => {
   const url = e.request.url;
-  if (url.includes('data.json') || url.includes('offline.json') || e.request.mode === 'navigate' || url.endsWith('.html')) {
+  const cleanUrl = url.split('?')[0];
+  if (url.includes('data.json') || url.includes('offline.json') || e.request.mode === 'navigate' || cleanUrl.endsWith('.html')) {
     e.respondWith(
       fetch(e.request)
-        .then(res => { const cl = res.clone(); caches.open(CACHE_NAME).then(c => c.put(e.request, cl)); return res; })
-        .catch(() => caches.match(e.request, {ignoreSearch: true}))
+        .then(res => { const cl = res.clone(); caches.open(CACHE_NAME).then(c => c.put(cleanUrl, cl)); return res; })
+        .catch(() => caches.match(cleanUrl).then(m => m || caches.match(e.request, {ignoreSearch: true})))
     );
     return;
   }
@@ -2395,7 +2394,7 @@ if __name__ == "__main__":
         **({"merged_details": a["merged_details"]} if a.get("merged_details") else {})
     } for a in final]
 
-    should_deploy = bool(new_items or merged_updates or force or not os.path.exists("public/index.html"))
+    should_deploy = True or bool(new_items or merged_updates or force or not os.path.exists("public/index.html"))
     if "GITHUB_OUTPUT" in os.environ:
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as gh:
             gh.write(f"deploy={'true' if should_deploy else 'false'}\n")
