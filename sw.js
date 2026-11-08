@@ -5,6 +5,7 @@ self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => 
 self.addEventListener('fetch', e => {
   const url = e.request.url;
   const cleanUrl = url.split('?')[0];
+  const cleanUrl = url.split('?')[0];
   if (url.includes('data.json') || url.includes('offline.json') || e.request.mode === 'navigate' || cleanUrl.endsWith('.html')) {
     e.respondWith(
       fetch(e.request)
