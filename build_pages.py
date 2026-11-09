@@ -178,36 +178,27 @@ def hash_feed(url: str) -> str:
 def html_to_reader_blocks(raw_html: str) -> str:
     if not raw_html:
         return ""
-    cleaned = re.sub(
-        r"<(script|style|noscript|svg|iframe|form|nav|footer|header|aside|button|figure\s+class=[\"'][^\"']*ad)\b[^>]*>.*?</\1>",
-        " ", raw_html, flags=re.I | re.S
-    )
+    cleaned = re.sub(r"<(script|style|noscript|svg|iframe|form|nav|footer|header|aside|button)\b[^>]*>.*?</\1>", " ", raw_html, flags=re.I | re.S)
+    cleaned = re.sub(r"<figure\b[^>]*class=[\"\x27][^\"\x27]*ad[^>]*>.*?</figure>", " ", cleaned, flags=re.I | re.S)
     art_m = re.search(r"<(article|main)\b[^>]*>(.*?)</\1>", cleaned, flags=re.I | re.S)
-    target_html = art_m.group(2) if (art_m and len(art_m.group(2)) > 400) else cleaned
+    target_html = art_m.group(2) if (art_m and len(art_m.group(2)) > 250) else cleaned
+    target_html = re.sub(r"(?:<br\s*/?>\s*){2,}", "</p><p>", target_html, flags=re.I)
 
-    blocks = []
-    seen_texts = set()
-    for m in re.finditer(r"<(h2|h3|p|li|blockquote)\b[^>]*>(.*?)</\1>", target_html, flags=re.I | re.S):
-        tag = m.group(1).lower()
-        txt = clean_text(m.group(2))
-        if not txt:
+    blocks, seen_texts = [], set()
+    for m in re.finditer(r"<(h2|h3|p|li|blockquote|div)\b[^>]*>(.*?)</\1>", target_html, flags=re.I | re.S):
+        tag, inner = m.group(1).lower(), m.group(2)
+        if tag == "div" and re.search(r"<(p|div|h2|h3|ul|ol|article)\b", inner, flags=re.I):
             continue
-        if tag in ("h2", "h3") and len(txt) < 12:
+        txt = clean_text(inner)
+        if not txt or (tag in ("p", "div") and len(txt) < 28) or (tag == "li" and len(txt) < 20):
             continue
-        if tag == "p" and len(txt) < 45:
-            continue
-        if tag == "li" and (len(txt) < 35 or len(txt.split()) < 6):
-            continue
-        if any(bad in txt.lower() for bad in [
-            "cookie", "datenschutz", "newsletter", "jetzt abonnieren", "alle rechte vorbehalten",
-            "anzeige", "weiterlesen", "kommentare lesen", "inhaltsverzeichnis", "privacy policy"
-        ]):
+        if any(b in txt.lower() for b in ["cookie", "datenschutz", "newsletter", "jetzt abonnieren", "alle rechte vorbehalten", "weiterlesen", "kommentare lesen", "inhaltsverzeichnis", "privacy policy"]):
             continue
         if txt in seen_texts:
             continue
         seen_texts.add(txt)
         safe_txt = html.escape(txt)
-        if tag in ("h2", "h3"):
+        if tag in ("h2", "h3") and len(txt) >= 10:
             blocks.append(f"<h3>{safe_txt}</h3>")
         elif tag == "blockquote":
             blocks.append(f"<blockquote>{safe_txt}</blockquote>")
@@ -216,8 +207,12 @@ def html_to_reader_blocks(raw_html: str) -> str:
         else:
             blocks.append(f"<p>{safe_txt}</p>")
 
-    out = "".join(blocks)
-    return out[:14000] if len(out) >= 220 else ""
+    if not blocks:
+        plain = clean_text(target_html)
+        if len(plain) >= 60:
+            blocks.append(f"<p>{html.escape(plain)}</p>")
+
+    return "".join(blocks)[:15000]
 
 
 def fetch_article_reader_html(url: str, fallback_rss_html: str = "") -> str:
@@ -627,7 +622,7 @@ def build_offline_archive(articles: list[dict], existing_offline: dict) -> dict:
         link = a.get("link", "")
         if not link:
             continue
-        if link in existing_offline and existing_offline[link]:
+        if link in existing_offline and len(existing_offline[link]) > 350:
             out_map[link] = existing_offline[link]
         else:
             to_fetch.append(a)
@@ -1171,7 +1166,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     function loadLocalOfflineCache(){
       if(!navigator.onLine){ updateOnlineStatusUI(); return; }
       try {
-        offlineMap = JSON.parse(localStorage.getItem('offline_articles_48h_v44') || '{}');
+        offlineMap = JSON.parse(localStorage.getItem('offline_articles_48h_v45') || '{}');
         const cnt = Object.keys(offlineMap).length;
         const el = document.getElementById('offline-status');
         if(el && cnt > 0){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
@@ -1192,7 +1187,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
         if(parsedOff){
           offlineMap = parsedOff;
-          try { localStorage.setItem('offline_articles_48h_v44', JSON.stringify(offlineMap)); } catch(e){}
+          try { localStorage.setItem('offline_articles_48h_v45', JSON.stringify(offlineMap)); } catch(e){}
           const cnt = Object.keys(offlineMap).length;
           if(el){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
 
@@ -1203,7 +1198,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
           if(manualTrigger && 'caches' in window){
             const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 80);
-            caches.open('news-hub-v44').then(cache => {
+            caches.open('news-hub-v45').then(cache => {
               imgUrls.forEach(u => fetch(u, {mode: 'no-cors'}).then(res => cache.put(u, res)).catch(()=>{}));
             });
             showToast(`✅ ${cnt} Artikel + Bilder komprimiert für Offline-Modus gespeichert!`, 3500);
@@ -2171,7 +2166,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         }
 
         if(navigator.onLine){
-          setTimeout(() => preloadOfflineArchive(false), 1200);
+          setTimeout(() => preloadOfflineArchive(false), 150);
         }
 
         // --- Observer: 100% Sichtbarkeit und 2 Sekunden Verweildauer ---
@@ -2296,7 +2291,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v44';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v45';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
