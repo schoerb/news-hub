@@ -714,7 +714,13 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       position:relative;
       overscroll-behavior-y:none;
       -webkit-overflow-scrolling:touch;
+      scrollbar-width: auto;
+      scrollbar-color: var(--accent) var(--border);
     }
+    .main::-webkit-scrollbar{width:8px}
+    .main::-webkit-scrollbar-track{background:var(--card)}
+    .main::-webkit-scrollbar-thumb{background:var(--accent);border-radius:4px}
+    .main::-webkit-scrollbar-thumb:hover{background:var(--bold)}
     .stream-header{position:sticky;top:0;z-index:50;background:rgba(18,20,24,.55);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;transition:transform .28s ease}
     .stream-header.header-hidden{transform:translateY(-100%)}
     [data-theme="light"] .stream-header{background:rgba(248,250,252,.65)}
@@ -1213,7 +1219,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
         if(parsedOff){
           offlineMap = parsedOff;
-          try { localStorage.setItem('offline_articles_48h_v47', JSON.stringify(offlineMap)); } catch(e){}
+          try { localStorage.setItem('offline_articles_48h_v48', JSON.stringify(offlineMap)); } catch(e){}
           const cnt = Object.keys(offlineMap).length;
           if(el){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
 
@@ -1224,7 +1230,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
           if('caches' in window){
             const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 120);
-            caches.open('news-hub-v47').then(async cache => {
+            caches.open('news-hub-v48').then(async cache => {
               for(const u of imgUrls){
                 try {
                   const match = await cache.match(u, {ignoreSearch: true});
@@ -2326,7 +2332,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v47';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v48';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
