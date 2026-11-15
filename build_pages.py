@@ -220,7 +220,7 @@ def fetch_article_reader_html(url: str, fallback_rss_html: str = "") -> str:
     if len(rss_extracted) >= 650:
         return rss_extracted
     try:
-        r = session.get(url, timeout=(2.5, 4.0))
+        r = session.get(url, timeout=(2.0, 3.0))
         if r.ok and "text/html" in r.headers.get("Content-Type", "").lower():
             r.encoding = r.apparent_encoding or "utf-8"
             web_extracted = html_to_reader_blocks(r.text)
@@ -1232,7 +1232,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
         if(parsedOff){
           offlineMap = parsedOff;
-          try { localStorage.setItem('offline_articles_48h_v49', JSON.stringify(offlineMap)); } catch(e){}
+          try { localStorage.setItem('offline_articles_48h_v50', JSON.stringify(offlineMap)); } catch(e){}
           const cnt = Object.keys(offlineMap).length;
           if(el){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
 
@@ -1241,16 +1241,25 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
             if(rBtn) rBtn.classList.toggle('has-offline', Boolean(offlineMap[c.dataset.link]));
           });
 
-          if('caches' in window){
+                    if('caches' in window){
             const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 120);
-            caches.open('news-hub-v49').then(async cache => {
-              for(const u of imgUrls){
-                try {
-                  const match = await cache.match(u, {ignoreSearch: true});
-                  if(!match){
-                    const res = await fetch(u, {mode: 'no-cors', referrerPolicy: 'no-referrer'});
-                    await cache.put(u, res);
-                  }
+            const runImagePreload = async () => {
+              caches.open('news-hub-v50').then(async cache => {
+                for(const u of imgUrls){
+                  try {
+                    const match = await cache.match(u, {ignoreSearch: true});
+                    if(!match){
+                      const res = await fetch(u, {mode: 'no-cors', referrerPolicy: 'no-referrer'});
+                      await cache.put(u, res);
+                    }
+                  } catch(e){}
+                }
+              });
+            };
+            if('requestIdleCallback' in window) requestIdleCallback(runImagePreload, {timeout: 3000});
+            else setTimeout(runImagePreload, 1500);
+            if(manualTrigger) showToast(`✅ ${cnt} Artikel + Bilder (Stand ${stTime}) für Offline-Modus gespeichert!`, 3500);
+          }
                 } catch(e){}
               }
             });
@@ -2347,7 +2356,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v49';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v50';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
