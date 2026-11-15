@@ -1094,7 +1094,20 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       return `${pad2(d.getDate())}.${pad2(d.getMonth()+1)}.${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
     }
 
-    function initTheme(){ document.documentElement.setAttribute('data-theme', localStorage.getItem('hub_theme') || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')); }
+    function initTheme(){
+      const saved = localStorage.getItem('hub_theme');
+      if(saved){
+        document.documentElement.setAttribute('data-theme', saved);
+      } else {
+        const sysLight = matchMedia('(prefers-color-scheme: light)').matches;
+        document.documentElement.setAttribute('data-theme', sysLight ? 'light' : 'dark');
+        matchMedia('(prefers-color-scheme: light)').addEventListener('change', e => {
+          if(!localStorage.getItem('hub_theme')){
+            document.documentElement.setAttribute('data-theme', e.matches ? 'light' : 'dark');
+          }
+        });
+      }
+    }
     function toggleTheme(){ const t = document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark'; document.documentElement.setAttribute('data-theme',t); localStorage.setItem('hub_theme',t); }
     function toggleSidebar(){
       const sb = document.getElementById('sidebar');
@@ -1219,7 +1232,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
         if(parsedOff){
           offlineMap = parsedOff;
-          try { localStorage.setItem('offline_articles_48h_v48', JSON.stringify(offlineMap)); } catch(e){}
+          try { localStorage.setItem('offline_articles_48h_v49', JSON.stringify(offlineMap)); } catch(e){}
           const cnt = Object.keys(offlineMap).length;
           if(el){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
 
@@ -1230,7 +1243,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
           if('caches' in window){
             const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 120);
-            caches.open('news-hub-v48').then(async cache => {
+            caches.open('news-hub-v49').then(async cache => {
               for(const u of imgUrls){
                 try {
                   const match = await cache.match(u, {ignoreSearch: true});
@@ -2084,8 +2097,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
         else if(touchTargetCard && Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) < 120){
           touchTargetCard.style.transform = `translateX(${diffX * 0.35}px)`;
           const ready = Math.abs(diffX) > 60 && Math.abs(diffX) > Math.abs(diffY) * 1.4;
+          const wasReady = touchTargetCard.classList.contains('swipe-rd') || touchTargetCard.classList.contains('swipe-bm');
           touchTargetCard.classList.toggle('swipe-rd', ready && diffX > 0);
           touchTargetCard.classList.toggle('swipe-bm', ready && diffX < 0);
+          if(ready && !wasReady && navigator.vibrate) navigator.vibrate(18);
         }
       }, {passive:false});
 
@@ -2332,7 +2347,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v48';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v49';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
