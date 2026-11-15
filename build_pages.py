@@ -630,7 +630,10 @@ def build_offline_archive(articles: list[dict], existing_offline: dict) -> dict:
     if to_fetch:
         print(f"📖 Extrahiere Offline-Volltexte für {len(to_fetch)} Artikel (48h inkl. Archiv)...")
         def _extract_one(art):
-            return art["link"], fetch_article_reader_html(art["link"], art.get("_rss_html", ""))
+            res_html = fetch_article_reader_html(art["link"], art.get("_rss_html", "") or art.get("summary", ""))
+            if not res_html and art.get("summary"):
+                res_html = f"<p>{art['summary']}</p>"
+            return art["link"], res_html
 
         with ThreadPoolExecutor(max_workers=12) as ex:
             for link, content_html in ex.map(_extract_one, to_fetch):
@@ -1163,14 +1166,37 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
     window.addEventListener('online', updateOnlineStatusUI);
     window.addEventListener('offline', updateOnlineStatusUI);
 
-    function loadLocalOfflineCache(){
-      if(!navigator.onLine){ updateOnlineStatusUI(); return; }
+        async function loadLocalOfflineCache(){
       try {
-        offlineMap = JSON.parse(localStorage.getItem('offline_articles_48h_v45') || '{}');
+        const rawStored = localStorage.getItem(OFFLINE_STORAGE_KEY);
+        if(rawStored){
+          const pw = localStorage.getItem('hub_key') || '';
+          const parsed = await parsePayloadAsync(rawStored, pw);
+          if(parsed && Object.keys(parsed).length > 0) offlineMap = parsed;
+        }
+        if(Object.keys(offlineMap).length === 0 && 'caches' in window){
+          const cRes = await caches.match('offline.json', {ignoreSearch: true});
+          if(cRes){
+            const rawCache = (await cRes.text()).trim();
+            const pw = localStorage.getItem('hub_key') || '';
+            const parsed = await parsePayloadAsync(rawCache, pw);
+            if(parsed) offlineMap = parsed;
+          }
+        }
         const cnt = Object.keys(offlineMap).length;
         const el = document.getElementById('offline-status');
-        if(el && cnt > 0){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
-      } catch(e){ offlineMap = {}; }
+        if(cnt > 0){
+          document.querySelectorAll('.feed-card').forEach(c => {
+            const rBtn = c.querySelector('.reader-btn');
+            if(rBtn) rBtn.classList.toggle('has-offline', Boolean(offlineMap[c.dataset.link]));
+          });
+          if(el && navigator.onLine){
+            const stTime = getShortCacheTime();
+            el.innerHTML = `📥 ${cnt} Offline${stTime ? ' (' + stTime + ')' : ''}`;
+            el.style.color = 'var(--accent)';
+          }
+        }
+      } catch(e){ console.error(e); }
     }
 
     async function preloadOfflineArchive(manualTrigger = false){
@@ -1187,7 +1213,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
         if(parsedOff){
           offlineMap = parsedOff;
-          try { localStorage.setItem('offline_articles_48h_v45', JSON.stringify(offlineMap)); } catch(e){}
+          try { localStorage.setItem('offline_articles_48h_v47', JSON.stringify(offlineMap)); } catch(e){}
           const cnt = Object.keys(offlineMap).length;
           if(el){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
 
@@ -1196,12 +1222,20 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
             if(rBtn) rBtn.classList.toggle('has-offline', Boolean(offlineMap[c.dataset.link]));
           });
 
-          if(manualTrigger && 'caches' in window){
-            const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 80);
-            caches.open('news-hub-v45').then(cache => {
-              imgUrls.forEach(u => fetch(u, {mode: 'no-cors'}).then(res => cache.put(u, res)).catch(()=>{}));
+          if('caches' in window){
+            const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 120);
+            caches.open('news-hub-v47').then(async cache => {
+              for(const u of imgUrls){
+                try {
+                  const match = await cache.match(u, {ignoreSearch: true});
+                  if(!match){
+                    const res = await fetch(u, {mode: 'no-cors', referrerPolicy: 'no-referrer'});
+                    await cache.put(u, res);
+                  }
+                } catch(e){}
+              }
             });
-            showToast(`✅ ${cnt} Artikel + Bilder komprimiert für Offline-Modus gespeichert!`, 3500);
+            if(manualTrigger) showToast(`✅ ${cnt} Artikel + Bilder (Stand ${stTime}) für Offline-Modus gespeichert!`, 3500);
           }
         }
       } catch(e){
@@ -1223,7 +1257,8 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
       updateReaderBookmarkUI();
     }
 
-    function openReaderModal(id, slideDir = 0){
+    async function openReaderModal(id, slideDir = 0){
+      if(Object.keys(offlineMap).length === 0) await loadLocalOfflineCache();
       const art = liveArticles.find(a => String(hStr(a.link||'')) === String(id)) || globalArticles.find(a => String(hStr(a.link||'')) === String(id));
       if(!art) return;
 
@@ -2291,7 +2326,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v45';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v47';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
@@ -2307,7 +2342,18 @@ self.addEventListener('fetch', e => {
     );
     return;
   }
-  e.respondWith(caches.match(e.request, {ignoreSearch: true}).then(cached => cached || fetch(e.request)));
+  e.respondWith(
+    caches.match(e.request, {ignoreSearch: true}).then(cached => {
+      if (cached) return cached;
+      return fetch(e.request).then(res => {
+        if (e.request.destination === 'image' || (res && res.ok)) {
+          const cl = res.clone();
+          caches.open(CACHE_NAME).then(c => c.put(e.request, cl)).catch(()=>{});
+        }
+        return res;
+      }).catch(() => new Response('', {status: 404}));
+    })
+  );
 });
 """
 
