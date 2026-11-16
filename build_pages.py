@@ -220,7 +220,7 @@ def fetch_article_reader_html(url: str, fallback_rss_html: str = "") -> str:
     if len(rss_extracted) >= 650:
         return rss_extracted
     try:
-        r = session.get(url, timeout=(2.0, 3.0))
+        r = session.get(url, timeout=(2.5, 4.0))
         if r.ok and "text/html" in r.headers.get("Content-Type", "").lower():
             r.encoding = r.apparent_encoding or "utf-8"
             web_extracted = html_to_reader_blocks(r.text)
