@@ -1232,7 +1232,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 
         if(parsedOff){
           offlineMap = parsedOff;
-          try { localStorage.setItem('offline_articles_48h_v51', JSON.stringify(offlineMap)); } catch(e){}
+          try { localStorage.setItem('offline_articles_48h_v52', JSON.stringify(offlineMap)); } catch(e){}
           const cnt = Object.keys(offlineMap).length;
           if(el){ el.innerHTML = `📥 ${cnt} Offline`; el.style.color = 'var(--accent)'; }
 
@@ -1241,25 +1241,16 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
             if(rBtn) rBtn.classList.toggle('has-offline', Boolean(offlineMap[c.dataset.link]));
           });
 
-                    if('caches' in window){
+          if('caches' in window){
             const imgUrls = liveArticles.map(a => a.image).filter(Boolean).slice(0, 120);
-            const runImagePreload = async () => {
-              caches.open('news-hub-v51').then(async cache => {
-                for(const u of imgUrls){
-                  try {
-                    const match = await cache.match(u, {ignoreSearch: true});
-                    if(!match){
-                      const res = await fetch(u, {mode: 'no-cors', referrerPolicy: 'no-referrer'});
-                      await cache.put(u, res);
-                    }
-                  } catch(e){}
-                }
-              });
-            };
-            if('requestIdleCallback' in window) requestIdleCallback(runImagePreload, {timeout: 3000});
-            else setTimeout(runImagePreload, 1500);
-            if(manualTrigger) showToast(`✅ ${cnt} Artikel + Bilder (Stand ${stTime}) für Offline-Modus gespeichert!`, 3500);
-          }
+            caches.open('news-hub-v52').then(async cache => {
+              for(const u of imgUrls){
+                try {
+                  const match = await cache.match(u, {ignoreSearch: true});
+                  if(!match){
+                    const res = await fetch(u, {mode: 'no-cors', referrerPolicy: 'no-referrer'});
+                    await cache.put(u, res);
+                  }
                 } catch(e){}
               }
             });
@@ -2356,7 +2347,7 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 </html>
 """
 
-SW_SCRIPT = """const CACHE_NAME = 'news-hub-v51';
+SW_SCRIPT = """const CACHE_NAME = 'news-hub-v52';
 const ASSETS = ['./manifest.json', 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap', 'https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))); self.clients.claim(); });
